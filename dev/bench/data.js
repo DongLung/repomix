@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775341360200,
+  "lastUpdate": 1775427762947,
   "repoUrl": "https://github.com/DongLung/repomix",
   "entries": {
     "Repomix Performance": [
@@ -270,6 +270,51 @@ window.BENCHMARK_DATA = {
             "range": "±51",
             "unit": "ms",
             "extra": "Median of 20 runs\nQ1: 2494ms, Q3: 2545ms\nAll times: 2471, 2476, 2482, 2484, 2487, 2494, 2497, 2502, 2518, 2520, 2530, 2535, 2538, 2538, 2542, 2545, 2545, 2555, 2559, 2565ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "koukun0120@gmail.com",
+            "name": "Kazuki Yamada",
+            "username": "yamadashy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "129cfbe9f587607e143de9f89f73226a5548f364",
+          "message": "Merge pull request #1410 from yamadashy/perf/use-brotli-for-cache-compression\n\nperf(server): Switch cache compression from deflate to Brotli",
+          "timestamp": "2026-04-06T02:16:48+09:00",
+          "tree_id": "09b733d02acec7336e3f13eca2e60fea343ae642",
+          "url": "https://github.com/DongLung/repomix/commit/129cfbe9f587607e143de9f89f73226a5548f364"
+        },
+        "date": 1775427762659,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Repomix Pack (macOS)",
+            "value": 1164,
+            "range": "±97",
+            "unit": "ms",
+            "extra": "Median of 30 runs\nQ1: 1134ms, Q3: 1231ms\nAll times: 1099, 1117, 1126, 1127, 1127, 1128, 1133, 1134, 1134, 1136, 1137, 1142, 1146, 1152, 1162, 1164, 1177, 1179, 1191, 1194, 1194, 1221, 1231, 1237, 1253, 1255, 1298, 1325, 1419, 1476ms"
+          },
+          {
+            "name": "Repomix Pack (Linux)",
+            "value": 1869,
+            "range": "±37",
+            "unit": "ms",
+            "extra": "Median of 20 runs\nQ1: 1855ms, Q3: 1892ms\nAll times: 1834, 1837, 1838, 1851, 1852, 1855, 1859, 1864, 1864, 1866, 1869, 1873, 1877, 1885, 1890, 1892, 1895, 1897, 1903, 1905ms"
+          },
+          {
+            "name": "Repomix Pack (Windows)",
+            "value": 2411,
+            "range": "±37",
+            "unit": "ms",
+            "extra": "Median of 20 runs\nQ1: 2397ms, Q3: 2434ms\nAll times: 2371, 2379, 2385, 2386, 2394, 2397, 2400, 2401, 2406, 2411, 2411, 2415, 2419, 2426, 2430, 2434, 2438, 2451, 2453, 2471ms"
           }
         ]
       }
