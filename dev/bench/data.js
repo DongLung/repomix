@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776032572876,
+  "lastUpdate": 1776205925216,
   "repoUrl": "https://github.com/DongLung/repomix",
   "entries": {
     "Repomix Performance": [
@@ -495,6 +495,51 @@ window.BENCHMARK_DATA = {
             "range": "±146",
             "unit": "ms",
             "extra": "Median of 20 runs\nQ1: 2011ms, Q3: 2157ms\nAll times: 1986, 1994, 2005, 2010, 2011, 2011, 2041, 2061, 2062, 2076, 2080, 2088, 2089, 2100, 2110, 2157, 2262, 2266, 2282, 2332ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "koukun0120@gmail.com",
+            "name": "Kazuki Yamada",
+            "username": "yamadashy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1c01d6951c6494ef226637bb83d5c70cd7e0716f",
+          "message": "Merge pull request #1467 from yamadashy/perf/prefetch-sort-data\n\nperf(core): Prefetch git sort data to overlap with file search and collection",
+          "timestamp": "2026-04-15T00:41:41+09:00",
+          "tree_id": "cba49da97f353c479f12fcb5d8418cbefe43c759",
+          "url": "https://github.com/DongLung/repomix/commit/1c01d6951c6494ef226637bb83d5c70cd7e0716f"
+        },
+        "date": 1776205924731,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Repomix Pack (macOS)",
+            "value": 1254,
+            "range": "±136",
+            "unit": "ms",
+            "extra": "Median of 30 runs\nQ1: 1180ms, Q3: 1316ms\nAll times: 919, 930, 1031, 1047, 1131, 1138, 1172, 1180, 1182, 1201, 1202, 1213, 1230, 1230, 1235, 1254, 1272, 1274, 1281, 1283, 1306, 1310, 1316, 1326, 1332, 1334, 1340, 1391, 1394, 1419ms"
+          },
+          {
+            "name": "Repomix Pack (Linux)",
+            "value": 1601,
+            "range": "±54",
+            "unit": "ms",
+            "extra": "Median of 20 runs\nQ1: 1575ms, Q3: 1629ms\nAll times: 1552, 1565, 1569, 1574, 1574, 1575, 1575, 1577, 1578, 1587, 1601, 1602, 1611, 1617, 1624, 1629, 1631, 1654, 1665, 1676ms"
+          },
+          {
+            "name": "Repomix Pack (Windows)",
+            "value": 2553,
+            "range": "±49",
+            "unit": "ms",
+            "extra": "Median of 20 runs\nQ1: 2512ms, Q3: 2561ms\nAll times: 2423, 2494, 2504, 2504, 2506, 2512, 2526, 2537, 2539, 2548, 2553, 2555, 2557, 2560, 2560, 2561, 2576, 2579, 2607, 2848ms"
           }
         ]
       }
