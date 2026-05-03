@@ -1,16 +1,45 @@
+---
+title: Repomix Explorer Skill (Agent Skills)
+description: Claude Code और Agent Skills format support करने वाले अन्य AI assistants के साथ local और remote codebases analyze करने के लिए Repomix Explorer agent skill install करें।
+---
+
 # Repomix Explorer Skill (Agent Skills)
 
 Repomix एक रेडी-टू-यूज **Repomix Explorer** स्किल प्रदान करता है जो AI कोडिंग असिस्टेंट को Repomix CLI का उपयोग करके कोडबेस का विश्लेषण और अन्वेषण करने में सक्षम बनाता है।
 
-यह स्किल Claude Code, Cursor, Codex, GitHub Copilot और अन्य सहित विभिन्न AI टूल्स के साथ काम करने के लिए डिज़ाइन किया गया है।
+यह स्किल Claude Code और Agent Skills format support करने वाले अन्य AI assistants के लिए डिज़ाइन किया गया है।
 
 ## त्वरित इंस्टॉलेशन
 
-```bash
-npx add-skill yamadashy/repomix --skill repomix-explorer
+Claude Code के लिए official Repomix Explorer plugin install करें:
+
+```text
+/plugin marketplace add yamadashy/repomix
+/plugin install repomix-explorer@repomix
 ```
 
-यह कमांड स्किल को आपके AI असिस्टेंट की स्किल्स डायरेक्टरी (जैसे `.claude/skills/`) में इंस्टॉल करती है, जिससे यह तुरंत उपलब्ध हो जाता है।
+Claude Code plugin `/repomix-explorer:explore-local` और `/repomix-explorer:explore-remote` जैसे namespaced commands देता है। पूरी setup के लिए [Claude Code Plugins](/hi/guide/claude-code-plugins) देखें।
+
+Codex, Cursor, OpenClaw और अन्य Agent Skills-compatible assistants के लिए standalone skill को Skills CLI से install करें:
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer
+```
+
+किसी specific assistant को target करने के लिए `--agent` पास करें:
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer --agent codex
+npx skills add yamadashy/repomix --skill repomix-explorer --agent openclaw
+```
+
+Hermes Agent के लिए, Hermes Agent के native skills command से single-file skill install करें:
+
+```bash
+hermes skills install https://raw.githubusercontent.com/yamadashy/repomix/main/.claude/skills/repomix-explorer/SKILL.md
+```
+
+यदि आप Hermes Agent को मुख्य रूप से repository analysis के लिए उपयोग करते हैं, तो [MCP Server](/hi/guide/mcp-server) setup भी अच्छा विकल्प है क्योंकि यह Repomix को सीधे MCP server के रूप में चलाता है।
 
 ## यह क्या करता है
 

@@ -1,16 +1,45 @@
+---
+title: "Repomix Explorer Skill (Agent Skills)"
+description: "Instale a agent skill Repomix Explorer para analisar bases de código locais e remotas com Claude Code e outros assistentes de IA compatíveis com o formato Agent Skills."
+---
+
 # Repomix Explorer Skill (Agent Skills)
 
 Repomix fornece um skill **Repomix Explorer** pronto para uso que permite que assistentes de codificação de IA analisem e explorem bases de código usando Repomix CLI.
 
-Este skill foi projetado para funcionar com várias ferramentas de IA, incluindo Claude Code, Cursor, Codex, GitHub Copilot e mais.
+Este skill foi projetado para Claude Code e outros assistentes de IA compatíveis com o formato Agent Skills.
 
 ## Instalação Rápida
 
-```bash
-npx add-skill yamadashy/repomix --skill repomix-explorer
+Para Claude Code, instale o plugin oficial Repomix Explorer:
+
+```text
+/plugin marketplace add yamadashy/repomix
+/plugin install repomix-explorer@repomix
 ```
 
-Este comando instala o skill no diretório de skills do seu assistente de IA (ex. `.claude/skills/`), tornando-o imediatamente disponível.
+O plugin do Claude Code fornece comandos com namespace como `/repomix-explorer:explore-local` e `/repomix-explorer:explore-remote`. Veja [Plugins do Claude Code](/pt-br/guide/claude-code-plugins) para a configuração completa.
+
+Para Codex, Cursor, OpenClaw e outros assistentes compatíveis com Agent Skills, instale a skill independente com a Skills CLI:
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer
+```
+
+Para direcionar um assistente específico, passe `--agent`:
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer --agent codex
+npx skills add yamadashy/repomix --skill repomix-explorer --agent openclaw
+```
+
+Para Hermes Agent, instale a skill de arquivo único com o comando nativo de skills do Hermes Agent:
+
+```bash
+hermes skills install https://raw.githubusercontent.com/yamadashy/repomix/main/.claude/skills/repomix-explorer/SKILL.md
+```
+
+Se você usa Hermes Agent principalmente para análise de repositórios, a configuração do [Servidor MCP](/pt-br/guide/mcp-server) também é uma boa opção, pois executa o Repomix diretamente como servidor MCP.
 
 ## O Que Faz
 

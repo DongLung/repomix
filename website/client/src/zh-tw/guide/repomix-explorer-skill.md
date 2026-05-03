@@ -1,16 +1,45 @@
+---
+title: Repomix Explorer Skill (Agent Skills)
+description: 安裝 Repomix Explorer agent skill，在 Claude Code 與支援 Agent Skills 格式的 AI 助手中分析本機與遠端程式碼庫。
+---
+
 # Repomix Explorer Skill (Agent Skills)
 
 Repomix 提供了一個即用型的 **Repomix Explorer** 技能，使 AI 編碼助手能夠使用 Repomix CLI 分析和探索程式碼庫。
 
-該技能設計用於各種 AI 工具，包括 Claude Code、Cursor、Codex、GitHub Copilot 等。
+該技能面向 Claude Code 與其他支援 Agent Skills 格式的 AI 助手。
 
 ## 快速安裝
 
-```bash
-npx add-skill yamadashy/repomix --skill repomix-explorer
+對於 Claude Code，請安裝官方 Repomix Explorer 外掛：
+
+```text
+/plugin marketplace add yamadashy/repomix
+/plugin install repomix-explorer@repomix
 ```
 
-此命令將技能安裝到您的 AI 助手的技能目錄（例如 `.claude/skills/`），使其立即可用。
+Claude Code 外掛提供 `/repomix-explorer:explore-local` 和 `/repomix-explorer:explore-remote` 等命名空間命令。完整設定請參閱 [Claude Code 外掛](/zh-tw/guide/claude-code-plugins)。
+
+對於 Codex、Cursor、OpenClaw 以及其他相容 Agent Skills 的助理，請使用 Skills CLI 安裝獨立 skill：
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer
+```
+
+如果要指定特定助理，請傳入 `--agent`：
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer --agent codex
+npx skills add yamadashy/repomix --skill repomix-explorer --agent openclaw
+```
+
+對於 Hermes Agent，請使用 Hermes Agent 原生的 skills 命令安裝單一檔案 skill：
+
+```bash
+hermes skills install https://raw.githubusercontent.com/yamadashy/repomix/main/.claude/skills/repomix-explorer/SKILL.md
+```
+
+如果你主要使用 Hermes Agent 進行 repository 分析，[MCP 伺服器](/zh-tw/guide/mcp-server)設定也是不錯的選擇，因為它會直接將 Repomix 作為 MCP server 執行。
 
 ## 功能介紹
 

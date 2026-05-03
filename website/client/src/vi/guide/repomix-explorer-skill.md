@@ -1,16 +1,45 @@
+---
+title: Repomix Explorer Skill (Agent Skills)
+description: Cài đặt Repomix Explorer agent skill để phân tích codebase local và remote bằng Claude Code cùng các AI assistant khác hỗ trợ định dạng Agent Skills.
+---
+
 # Repomix Explorer Skill (Agent Skills)
 
 Repomix cung cấp một skill **Repomix Explorer** sẵn sàng sử dụng cho phép các trợ lý lập trình AI phân tích và khám phá codebase bằng Repomix CLI.
 
-Skill này được thiết kế để hoạt động với nhiều công cụ AI khác nhau bao gồm Claude Code, Cursor, Codex, GitHub Copilot và nhiều hơn nữa.
+Skill này được thiết kế cho Claude Code và các AI assistant khác hỗ trợ định dạng Agent Skills.
 
 ## Cài Đặt Nhanh
 
-```bash
-npx add-skill yamadashy/repomix --skill repomix-explorer
+Với Claude Code, hãy cài plugin Repomix Explorer chính thức:
+
+```text
+/plugin marketplace add yamadashy/repomix
+/plugin install repomix-explorer@repomix
 ```
 
-Lệnh này cài đặt skill vào thư mục skills của trợ lý AI của bạn (ví dụ: `.claude/skills/`), làm cho nó có sẵn ngay lập tức.
+Plugin Claude Code cung cấp các lệnh có namespace như `/repomix-explorer:explore-local` và `/repomix-explorer:explore-remote`. Xem [Plugin Claude Code](/vi/guide/claude-code-plugins) để biết setup đầy đủ.
+
+Với Codex, Cursor, OpenClaw và các assistant tương thích Agent Skills khác, hãy cài skill độc lập bằng Skills CLI:
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer
+```
+
+Để nhắm tới một assistant cụ thể, truyền `--agent`:
+
+```bash
+npx skills add yamadashy/repomix --skill repomix-explorer --agent codex
+npx skills add yamadashy/repomix --skill repomix-explorer --agent openclaw
+```
+
+Với Hermes Agent, hãy cài skill một file bằng lệnh skills native của Hermes Agent:
+
+```bash
+hermes skills install https://raw.githubusercontent.com/yamadashy/repomix/main/.claude/skills/repomix-explorer/SKILL.md
+```
+
+Nếu bạn chủ yếu dùng Hermes Agent để phân tích repository, cấu hình [MCP Server](/vi/guide/mcp-server) cũng là lựa chọn tốt vì nó chạy Repomix trực tiếp như một MCP server.
 
 ## Chức Năng
 
