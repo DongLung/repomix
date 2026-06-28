@@ -1,6 +1,7 @@
 import type { RepomixConfigMerged } from '../../config/configSchema.js';
 import { logger } from '../../shared/logger.js';
 import { parseFile } from '../treeSitter/parseFile.js';
+import { type FileInclusionLevel, resolveFileLevel } from './fileLevelResolve.js';
 import { getFileManipulator } from './fileManipulate.js';
 import type { RawFile } from './fileTypes.js';
 
@@ -13,7 +14,11 @@ import type { RawFile } from './fileTypes.js';
  * Lightweight transforms (truncateBase64, removeEmptyLines, trim, showLineNumbers)
  * are applied separately on the main thread by processFiles().
  */
-export const processContent = async (rawFile: RawFile, config: RepomixConfigMerged): Promise<string> => {
+export const processContent = async (
+  rawFile: RawFile,
+  config: RepomixConfigMerged,
+  level?: FileInclusionLevel,
+): Promise<string> => {
   const processStartAt = process.hrtime.bigint();
   let processedContent = rawFile.content;
   const manipulator = getFileManipulator(rawFile.path);
@@ -24,17 +29,26 @@ export const processContent = async (rawFile: RawFile, config: RepomixConfigMerg
     processedContent = manipulator.removeComments(processedContent);
   }
 
-  if (config.output.compress) {
+  // Compress when this file resolves to the 'compress' level. The level is
+  // normally precomputed in the main thread and threaded through; fall back to
+  // resolving it here when it is not supplied. This honors per-file
+  // output.patterns overrides and the global output.compress setting.
+  const effectiveLevel = level ?? resolveFileLevel(rawFile.path, config.output);
+  if (effectiveLevel === 'compress') {
+    // Compression is best-effort. parseFile returns undefined when it cannot
+    // compress a file (unsupported language, parse failure, or a tree-sitter
+    // WASM abort on a pathological file); in that case we keep the uncompressed
+    // content so a single file's failure never aborts the entire pack. The
+    // catch is a safety net: parseFile is designed not to throw.
     try {
       const parsedContent = await parseFile(processedContent, rawFile.path, config);
       if (parsedContent === undefined) {
-        logger.trace(`Failed to parse ${rawFile.path} in compressed mode. Using original content.`);
+        logger.trace(`Could not compress ${rawFile.path}. Using uncompressed content.`);
       }
       processedContent = parsedContent ?? processedContent;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error(`Error parsing ${rawFile.path} in compressed mode: ${message}`);
-      throw error;
+      logger.warn(`Failed to compress ${rawFile.path}, using uncompressed content: ${message}`);
     }
   }
 
