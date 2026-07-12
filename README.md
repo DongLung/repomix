@@ -1034,6 +1034,7 @@ When running as an MCP server, Repomix provides the following tools:
     - `compress`: (Optional, default: false) Enable Tree-sitter compression to extract essential code signatures and structure while removing implementation details. Reduces token usage by ~70% while preserving semantic meaning. Generally not needed since grep_repomix_output allows incremental content retrieval. Use only when you specifically need the entire codebase content for large repositories.
     - `includePatterns`: (Optional) Specify files to include using fast-glob patterns. Multiple patterns can be comma-separated (e.g., "**/*.{js,ts}", "src/**,docs/**"). Only matching files will be processed.
     - `ignorePatterns`: (Optional) Specify additional files to exclude using fast-glob patterns. Multiple patterns can be comma-separated (e.g., "test/**,*.spec.js", "node_modules/**,dist/**"). These patterns supplement .gitignore, .ignore, and built-in exclusions.
+    - `outputPatterns`: (Optional) Per-file inclusion levels, mirroring the config-file `output.patterns` option. An array of `{ pattern, compress?, directoryStructureOnly? }` entries; the first matching pattern wins, `directoryStructureOnly` takes precedence over `compress`, and a match with neither flag forces full content (useful for exempting files from a global `compress`). Overrides any `output.patterns` from the target repository's `repomix.config.json`.
     - `topFilesLength`: (Optional, default: 10) Number of largest files by size to display in the metrics summary for codebase analysis.
 
 2. **attach_packed_output**: Attach an existing Repomix packed output file for AI analysis
@@ -1052,6 +1053,7 @@ When running as an MCP server, Repomix provides the following tools:
     - `compress`: (Optional, default: false) Enable Tree-sitter compression to extract essential code signatures and structure while removing implementation details. Reduces token usage by ~70% while preserving semantic meaning. Generally not needed since grep_repomix_output allows incremental content retrieval. Use only when you specifically need the entire codebase content for large repositories.
     - `includePatterns`: (Optional) Specify files to include using fast-glob patterns. Multiple patterns can be comma-separated (e.g., "**/*.{js,ts}", "src/**,docs/**"). Only matching files will be processed.
     - `ignorePatterns`: (Optional) Specify additional files to exclude using fast-glob patterns. Multiple patterns can be comma-separated (e.g., "test/**,*.spec.js", "node_modules/**,dist/**"). These patterns supplement .gitignore, .ignore, and built-in exclusions.
+    - `outputPatterns`: (Optional) Per-file inclusion levels, mirroring the config-file `output.patterns` option. An array of `{ pattern, compress?, directoryStructureOnly? }` entries; the first matching pattern wins, `directoryStructureOnly` takes precedence over `compress`, and a match with neither flag forces full content (useful for exempting files from a global `compress`).
     - `topFilesLength`: (Optional, default: 10) Number of largest files by size to display in the metrics summary for codebase analysis.
 
 4. **read_repomix_output**: Read the contents of a Repomix-generated output file. Supports partial reading with line range specification for large files.
@@ -1422,6 +1424,7 @@ Here's an explanation of the configuration options:
 | Option                           | Description                                                                                                                  | Default                |
 |----------------------------------|------------------------------------------------------------------------------------------------------------------------------|------------------------|
 | `input.maxFileSize`              | Maximum file size in bytes to process. Files larger than this will be skipped                                                | `50000000`            |
+| `input.processors`               | Ordered array of `{ pattern, command, timeout?, onError? }` entries that run an external command to transform matching files before packing (e.g. JSON→TOON). First matching glob wins. Runs arbitrary commands, so it runs only for local CLI runs (and remote repos with `--remote-trust-config`). See [File Processors](#file-processors) | Not set |
 | `output.filePath`                | The name of the output file                                                                                                  | `"repomix-output.xml"` |
 | `output.style`                   | The style of the output (`xml`, `markdown`, `json`, `plain`)                                                                 | `"xml"`                |
 | `output.filePathStyle`           | How file paths are shown in output (`target-relative` keeps paths relative to each target root, `cwd-relative` keeps paths relative to the current working directory) | `"target-relative"`    |
@@ -1487,7 +1490,11 @@ Example configuration:
 {
   "$schema": "https://repomix.com/schemas/latest/schema.json",
   "input": {
-    "maxFileSize": 50000000
+    "maxFileSize": 50000000,
+    // Optional: transform matching files with an external command before packing (local CLI only)
+    // "processors": [
+    //   { "pattern": "**/*.json", "command": "npx @toon-format/cli {file}" }
+    // ]
   },
   "output": {
     "filePath": "repomix-output.xml",
@@ -1657,6 +1664,42 @@ and YAML.
 
 Note: The comment removal process is conservative to avoid accidentally removing code. In complex cases, some comments
 might be retained.
+
+### File Processors
+
+`input.processors` runs an external command to transform a file's content **before** it is packed. Each entry targets files by glob (matched like `include`/`ignore`) and replaces the matching files' content with the command's standard output — useful for token-reducing or format-converting transforms such as JSON→[TOON](https://github.com/toon-format/toon), SVG minification, or notebook→script conversion.
+
+```json5
+{
+  "input": {
+    "processors": [
+      { "pattern": "**/*.json", "command": "npx @toon-format/cli {file}" }
+    ]
+  }
+}
+```
+
+The `{file}` placeholder (required) is replaced with a temp file holding the file's content, and the command's stdout becomes the new content. Patterns are evaluated in order and the **first match wins** (one processor per file). Each entry also accepts `timeout` (ms, default `60000`) and `onError` (`"fail"` to abort the pack, default; `"skip"` to warn and keep the original content).
+
+Example commands (each is a `command` value paired with a suitable `pattern`):
+
+| Pattern | `command` | What it does |
+| --- | --- | --- |
+| `**/*.json` | `jq -c . {file}` | Compact JSON by stripping whitespace |
+| `**/*.json` | `npx @toon-format/cli {file}` | Convert JSON to [TOON](https://github.com/toon-format/toon), a compact token-efficient format |
+| `**/*.svg` | `npx svgo -i {file} -o -` | Minify SVG |
+| `**/*.ipynb` | `jupyter nbconvert --to script --stdout {file}` | Convert a Jupyter notebook to a plain Python script |
+
+Apply only one processor per file (first match wins), and make sure the tool it invokes is on your `PATH` (`npx`-based commands download it on first use).
+
+> [!WARNING]
+> File processors run **arbitrary commands** from your config file, so execution is default-deny:
+>
+> - Enabled **only for local CLI runs**, where Repomix assumes the config in your working directory is your own — the same trust boundary as an npm script or a Makefile. As with those, if you run `repomix` inside a repository you obtained from someone else **without reviewing its `repomix.config.json` first**, its processor commands will execute on your machine. Review the config of untrusted repositories before packing them.
+> - **Disabled** for the library API (`pack()` / `runCli()`), the MCP server, and the hosted [repomix.com](https://repomix.com).
+> - For remote repositories (`--remote`), the cloned config — and its processors — is trusted only when you explicitly pass `--remote-trust-config`; without it the remote config is not even loaded.
+>
+> Active processors are printed at startup and in error messages, so reference credentials via environment variables (e.g. `$TOKEN`), which are logged unexpanded, rather than inlining them. On timeout Repomix kills the command's shell, but a command that spawns its own long-lived background processes may leave them running. See the [configuration guide](https://repomix.com/guide/configuration#file-processors) for details.
 
 ## 🔍 Security Check
 

@@ -1,5 +1,5 @@
 import type { OptionValues } from 'commander';
-import type { RepomixOutputFilePathStyle, RepomixOutputStyle } from '../config/configSchema.js';
+import type { OutputPattern, RepomixOutputFilePathStyle, RepomixOutputStyle } from '../config/configSchema.js';
 
 export interface CliOptions extends OptionValues {
   // Basic Options
@@ -12,6 +12,9 @@ export interface CliOptions extends OptionValues {
   outputFilePathStyle?: RepomixOutputFilePathStyle;
   parsableStyle?: boolean;
   compress?: boolean;
+  // Internal: per-file inclusion levels (output.patterns). Not exposed as a CLI flag;
+  // set programmatically by the MCP tools so an agent can build a packing scenario per call.
+  outputPatterns?: OutputPattern[];
   outputShowLineNumbers?: boolean;
   copy?: boolean;
   fileSummary?: boolean;
@@ -43,6 +46,7 @@ export interface CliOptions extends OptionValues {
   remoteBranch?: string;
   remoteTrustConfig?: boolean;
   skipLocalConfig?: boolean; // Internal flag: skip loading config files from the working directory (e.g., untrusted remote repos)
+  enableFileProcessors?: boolean; // Internal flag: allow input.processors to run external commands. Injected only by the real CLI entry point (auto-on for local runs; gated by --remote-trust-config for remote)
   deferTokenBudgetCheck?: boolean; // Internal flag: skip the token-budget check inside runDefaultAction so the caller can enforce it after delivering output (e.g., remote runs copy out of the temp dir first)
 
   // Configuration Options
