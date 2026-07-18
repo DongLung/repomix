@@ -17,7 +17,7 @@
     "zip:edge": "wxt zip -b edge",
     "generate-icons": "tsx scripts/generate-icons.ts",
     "lint": "node --run lint-tsc",
-    "lint-tsc": "tsgo --noEmit",
+    "lint-tsc": "tsc --noEmit",
     "test": "vitest",
     "archive": "git archive HEAD -o ./storage/source.zip"
   },
@@ -34,13 +34,12 @@
   "license": "MIT",
   "devDependencies": {
     "@types/chrome": "^0.2.2",
-    "@types/node": "^24.13.2",
-    "@typescript/native-preview": "^7.0.0-dev.20260705.1",
+    "@types/node": "^24.13.3",
     "jsdom": "^29.1.1",
     "sharp": "^0.35.3",
     "tsx": "^4.23.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.9",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
     "wxt": "^0.20.27"
   },
   "engines": {

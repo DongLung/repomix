@@ -37,7 +37,8 @@ const detailMessage = computed(() => {
     <div class="sponsor-section">
       <p class="sponsor-header">Special thanks to:</p>
       <a href="https://go.warp.dev/repomix" target="_blank" rel="noopener noreferrer">
-        <img alt="Warp sponsorship" width="400" src="https://raw.githubusercontent.com/warpdotdev/brand-assets/main/Github/Sponsor/Warp-Github-LG-01.png">
+        <!-- jsDelivr mirror of the sponsor's repo: auto-updates with long-lived cache headers. -->
+        <img alt="Warp sponsorship" width="400" height="225" src="https://cdn.jsdelivr.net/gh/warpdotdev/brand-assets/Github/Sponsor/Warp-Github-LG-01.png">
       </a>
       <p class="sponsor-title">
         <a href="https://go.warp.dev/repomix" target="_blank" rel="noopener noreferrer">
@@ -110,13 +111,13 @@ const detailMessage = computed(() => {
 .sponsor-section .sponsor-title {
   font-weight: bold;
   font-size: 1.1em;
-  color: var(--brand-text);
+  color: var(--vp-c-brand-1);
   text-decoration: underline;
 }
 
 .sponsor-section .sponsor-subtitle {
   font-size: 0.9em;
-  color: var(--brand-text);
+  color: var(--vp-c-brand-1);
   text-decoration: underline;
 }
 
