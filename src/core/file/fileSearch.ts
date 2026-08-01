@@ -128,6 +128,7 @@ export const searchFiles = async (
   rootDir: string,
   config: RepomixConfigMerged,
   explicitFiles?: string[],
+  confineToBaseDir = false,
 ): Promise<FileSearchResult> => {
   // Check if the path exists and get its type
   let pathStats: Stats;
@@ -286,12 +287,54 @@ export const searchFiles = async (
       logger.debug(`[globby] Completed in ${globbyElapsedTime}ms, found ${filePaths.length} files`);
     }
 
-    logger.debug(`[result] Total files: ${filePaths.length}, empty directories: ${emptyDirPaths.length}`);
-    logger.trace(`Filtered ${filePaths.length} files`);
+    // Optional security backstop (confineToBaseDir; set by untrusted-agent callers
+    // such as the MCP --sandbox): drop any match resolving outside rootDir. Glob
+    // patterns (absolute, brace/extglob-expanded, …) can make fast-glob match paths
+    // outside rootDir regardless of cwd; this is syntax-agnostic, independent of any
+    // caller-side pattern guard. OFF by default so the documented ../ / absolute
+    // include-pattern behavior is unchanged for normal CLI and library callers.
+    let confinedFilePaths = filePaths;
+    let confinedEmptyDirPaths = emptyDirPaths;
+    if (confineToBaseDir) {
+      const rootAbs = path.resolve(rootDir);
+      // Compare realpaths, not the lexical path: a lexically in-root match can still
+      // point outside when an intermediate component is a symlink — a glob whose
+      // static base names a symlinked dir (e.g. "gateway/x" with gateway -> /etc) is
+      // read through by fast-glob even with followSymbolicLinks:false. Canonicalize
+      // each match and drop anything outside the canonical root, or that cannot be
+      // resolved at all (fail closed — an unresolvable path is never safe to pack).
+      const realRoot = await fs.realpath(rootAbs).catch(() => rootAbs);
+      // A filesystem/drive root already ends in the separator (POSIX "/", Windows
+      // "C:\"), so appending another would make the prefix "//" and reject every
+      // child — build it only when the separator is missing.
+      const realRootPrefix = realRoot.endsWith(path.sep) ? realRoot : `${realRoot}${path.sep}`;
+      const withinRealRoot = async (rel: string): Promise<boolean> => {
+        try {
+          const real = await fs.realpath(path.resolve(rootAbs, rel));
+          return real === realRoot || real.startsWith(realRootPrefix);
+        } catch {
+          return false;
+        }
+      };
+      const fileKeep = await Promise.all(filePaths.map(withinRealRoot));
+      const emptyKeep = await Promise.all(emptyDirPaths.map(withinRealRoot));
+      confinedFilePaths = filePaths.filter((_, i) => fileKeep[i]);
+      confinedEmptyDirPaths = emptyDirPaths.filter((_, i) => emptyKeep[i]);
+      if (confinedFilePaths.length !== filePaths.length) {
+        logger.debug(
+          `[confine] dropped ${filePaths.length - confinedFilePaths.length} path(s) resolving outside ${realRoot}`,
+        );
+      }
+    }
+
+    logger.debug(
+      `[result] Total files: ${confinedFilePaths.length}, empty directories: ${confinedEmptyDirPaths.length}`,
+    );
+    logger.trace(`Filtered ${confinedFilePaths.length} files`);
 
     return {
-      filePaths: sortPaths(filePaths),
-      emptyDirPaths: sortPaths(emptyDirPaths),
+      filePaths: sortPaths(confinedFilePaths),
+      emptyDirPaths: sortPaths(confinedEmptyDirPaths),
     };
   } catch (error: unknown) {
     // Re-throw PermissionError as is
