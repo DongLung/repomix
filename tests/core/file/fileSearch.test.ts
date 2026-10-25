@@ -7,6 +7,7 @@ import { minimatch } from 'minimatch';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   escapeGlobPattern,
+  expandIgnorePattern,
   getIgnoreFilePatterns,
   getIgnorePatterns,
   listDirectories,
@@ -282,6 +283,29 @@ temp-files/
       // Only test for the exclude file patterns
       expect(patterns).toContain('*.ignored');
       expect(patterns).toContain('temp-files/');
+    });
+
+    test('should ignore numbered split output files without excluding similarly named files', async () => {
+      const mockConfig = createMockConfig({
+        cwd: '/mock/root',
+        output: { filePath: 'docs/mycustom.xml', splitOutput: 9216 },
+        ignore: {
+          useGitignore: true,
+          useDefaultPatterns: false,
+          customPatterns: [],
+        },
+      });
+
+      const patterns = await getIgnorePatterns('/mock/root', mockConfig);
+      const splitPartPattern = patterns.find((pattern) => minimatch('docs/mycustom.1.xml', pattern));
+
+      expect(splitPartPattern).toBeDefined();
+      if (!splitPartPattern) return;
+      expect(minimatch('docs/mycustom.notes.xml', splitPartPattern)).toBe(false);
+      expect(minimatch('docs/mycustom.10.xml', splitPartPattern)).toBe(true);
+      // Never generated: parts start at 1 and are not zero-padded.
+      expect(minimatch('docs/mycustom.0.xml', splitPartPattern)).toBe(false);
+      expect(minimatch('docs/mycustom.01.xml', splitPartPattern)).toBe(false);
     });
 
     test('should use POSIX separators for a nested output file path (Windows)', async () => {
@@ -926,6 +950,21 @@ node_modules
 
     test('should not convert patterns that already have /**/*', () => {
       expect(normalizeGlobPattern('**/folder/**/*')).toBe('**/folder/**/*');
+    });
+  });
+
+  describe('expandIgnorePattern', () => {
+    test('keeps the bare form of **/ patterns whose last segment has a wildcard', () => {
+      expect(expandIgnorePattern('**/npm-debug.log*')).toEqual(['**/npm-debug.log*', '**/npm-debug.log*/**']);
+      expect(expandIgnorePattern('**/.*')).toEqual(['**/.*', '**/.*/**']);
+      expect(expandIgnorePattern('**/file?.txt')).toEqual(['**/file?.txt', '**/file?.txt/**']);
+    });
+
+    test('returns only the normalized form for literal names and other patterns', () => {
+      expect(expandIgnorePattern('**/node_modules')).toEqual(['**/node_modules/**']);
+      expect(expandIgnorePattern('**/*.log/**')).toEqual(['**/*.log/**']);
+      expect(expandIgnorePattern('*.log')).toEqual(['*.log']);
+      expect(expandIgnorePattern('bin/')).toEqual(['bin']);
     });
   });
 

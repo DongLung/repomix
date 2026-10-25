@@ -1,16 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { braceExpand } from 'minimatch';
 import { z } from 'zod';
-import { runCli } from '../../cli/cliRun.js';
 import type { CliOptions } from '../../cli/types.js';
 import { defaultFilePathMap } from '../../config/configSchema.js';
-import { logger } from '../../shared/logger.js';
 import { splitPatterns } from '../../shared/patternUtils.js';
 import type { McpServerConfig } from '../mcpServer.js';
 import { isEscapingPath, resolveWithinRoot } from '../pathScope.js';
+import { withMcpProgress } from './mcpProgress.js';
 import {
   buildMcpToolErrorResponse,
   buildSandboxErrorResponse,
@@ -18,6 +16,8 @@ import {
   createToolWorkspace,
   formatPackToolResponse,
   outputPatternsSchema,
+  removeToolWorkspace,
+  runCliPreservingLogLevel,
 } from './mcpToolRuntime.js';
 
 /**
@@ -113,16 +113,13 @@ export const registerPackCodebaseTool = (
         openWorldHint: false,
       },
     },
-    async ({
-      directory,
-      compress,
-      includePatterns,
-      ignorePatterns,
-      outputPatterns,
-      topFilesLength,
-      style,
-    }): Promise<CallToolResult> => {
+    async (
+      { directory, compress, includePatterns, ignorePatterns, outputPatterns, topFilesLength, style },
+      ctx,
+    ): Promise<CallToolResult> => {
       let tempDir = '';
+      // Fires on notifications/cancelled for this request or when the transport closes.
+      const signal = ctx?.mcpReq.signal;
 
       try {
         let targetDirectory = directory;
@@ -166,6 +163,7 @@ export const registerPackCodebaseTool = (
           securityCheck: true,
           topFilesLen: topFilesLength,
           quiet: true,
+          signal,
           // Untrusted-workspace lockdown — one set, all gated on --sandbox:
           //  - skip EVERY config file: the workspace's repomix.config.* AND the
           //    operator's global one, since either could set
@@ -182,16 +180,12 @@ export const registerPackCodebaseTool = (
             : {}),
         } as CliOptions;
 
-        // cliOptions.quiet makes runCli set the SHARED logger to SILENT and never
-        // restore it — which would permanently blind the operator's stderr error
-        // logging for the rest of the MCP session. Save + restore around the call.
-        const logLevelBeforePack = logger.getLogLevel();
-        let result: Awaited<ReturnType<typeof runCli>>;
-        try {
-          result = await runCli(['.'], targetDirectory, cliOptions);
-        } finally {
-          logger.setLogLevel(logLevelBeforePack);
-        }
+        // Quiet packing must not leave the shared logger SILENT for the rest of the MCP
+        // session, so it goes through the save/restore wrapper all packing tools share.
+        // Sandbox: progress messages are reduced to fixed stage strings (see mcpProgress).
+        const result = await withMcpProgress(ctx, { sandboxed: config.sandboxed }, (progressCallback) =>
+          runCliPreservingLogLevel(['.'], targetDirectory, cliOptions, progressCallback),
+        );
         if (!result) {
           return buildMcpToolErrorResponse({
             errorMessage: 'Failed to return a result',
@@ -218,6 +212,10 @@ export const registerPackCodebaseTool = (
         // host path can leak. Non-sandbox: full detail (host paths are fine locally).
         if (config.sandboxed) return buildSandboxErrorResponse(error, directory);
         return buildMcpToolErrorResponse(convertErrorToJson(error));
+      } finally {
+        // The SDK never delivers a cancelled request's response, so nothing will read
+        // this workspace's output.
+        if (signal?.aborted && tempDir) await removeToolWorkspace(tempDir);
       }
     },
   );
