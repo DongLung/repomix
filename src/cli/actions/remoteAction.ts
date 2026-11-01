@@ -5,7 +5,12 @@ import pc from 'picocolors';
 import { execGitShallowClone } from '../../core/git/gitCommand.js';
 import { downloadGitHubArchive, isArchiveDownloadSupported } from '../../core/git/gitHubArchive.js';
 import { getRemoteRefs } from '../../core/git/gitRemoteHandle.js';
-import { isGitHubRepository, parseGitHubRepoInfo, parseRemoteValue } from '../../core/git/gitRemoteParse.js';
+import {
+  isGitHubRepository,
+  type ParsedRemoteValue,
+  parseGitHubRepoInfo,
+  parseRemoteValue,
+} from '../../core/git/gitRemoteParse.js';
 import { isGitInstalled } from '../../core/git/gitRepositoryHandle.js';
 import { generateDefaultSkillNameFromUrl, generateProjectNameFromUrl } from '../../core/skill/skillUtils.js';
 import { RepomixError } from '../../shared/errorHandle.js';
@@ -97,6 +102,15 @@ export const runRemoteAction = async (
         downloadMethod = 'archive';
         spinner.succeed('Repository archive downloaded successfully!');
         logger.log('');
+        // The archive ref is known to exist, so it splits the URL into ref and path
+        // the way ls-remote refs do on the clone path. The warning is best-effort and
+        // must not fail a download that already succeeded.
+        try {
+          const archiveRefs = repoInfoWithBranch.ref ? [repoInfoWithBranch.ref] : [];
+          warnIgnoredRemoteSubpath(parseRemoteValue(repoUrl, archiveRefs), archiveRefs);
+        } catch (error) {
+          logger.trace('Failed to check the remote URL for a path:', (error as Error).message);
+        }
       } catch (archiveError) {
         // A cancelled download must not fall back to cloning.
         if (signal?.aborted) {
@@ -221,6 +235,43 @@ export const runRemoteAction = async (
   return result;
 };
 
+// Characters that would break the quoted --include suggestion (quotes, shell
+// expansion, the comma separator, glob syntax) or the terminal (control codes).
+// `()` and `[]` are fine: --include escapes them, and they are inert in double
+// quotes, so Next.js paths like `app/(marketing)/[slug]` still get a suggestion.
+const UNSAFE_SUGGESTION_CHARS = /["'`$\\,*?{}!;&|<>]/;
+const isUnsafeForSuggestion = (path: string): boolean =>
+  UNSAFE_SUGGESTION_CHARS.test(path) || [...path].some((char) => char.charCodeAt(0) < 0x20 || char === '\x7f');
+
+/**
+ * A /tree/<ref>/<path> or /blob/<ref>/<path> URL still downloads and packs the
+ * whole repository, so say so instead of silently dropping the path (#433).
+ */
+const warnIgnoredRemoteSubpath = ({ subpath, remoteBranch }: ParsedRemoteValue, knownRefs: string[]): void => {
+  if (!subpath) {
+    return;
+  }
+  // Without a known ref, git-url-parse guesses the first segment is the ref, so a
+  // branch like `feature/x` would leave `x/...` in the path. Do not name a path
+  // (or suggest an --include) that may be wrong, or one that cannot be echoed safely.
+  if (!remoteBranch || !knownRefs.includes(remoteBranch) || isUnsafeForSuggestion(subpath.path)) {
+    logger.warn(
+      'The path in the remote URL is ignored, and the whole repository will be packed.\n' +
+        'To pack only part of it, use --include.',
+    );
+    return;
+  }
+  const includePattern = {
+    file: subpath.path,
+    directory: `${subpath.path}/**`,
+    unknown: `${subpath.path},${subpath.path}/**`,
+  }[subpath.kind];
+  logger.warn(
+    `The path "${subpath.path}" in the remote URL is ignored, and the whole repository will be packed.\n` +
+      `To pack only that path, add: --include "${includePattern}"`,
+  );
+};
+
 /**
  * Performs git clone operation with spinner and error handling
  */
@@ -250,6 +301,7 @@ const performGitClone = async (
 
   // Parse the remote URL with the refs information
   const parsedFields = parseRemoteValue(repoUrl, refs);
+  warnIgnoredRemoteSubpath(parsedFields, refs);
 
   const spinner = new Spinner('Cloning repository...', cliOptions);
 

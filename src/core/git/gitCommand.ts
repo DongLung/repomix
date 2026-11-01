@@ -28,8 +28,9 @@ const execFileAsync = promisify(execFile);
 const GIT_UNTRUSTED_CONFIG_ARGS = ['-c', 'core.fsmonitor='];
 // git C-quotes bytes outside ASCII by default (core.quotePath=true), so a UTF-8
 // filename comes back as "\346\227\245...". Repomix prints those paths in the
-// git-logs section and uses them as the keys for output.git.sortByChanges, while
-// every other section uses the raw name, so ask git for the raw form.
+// git-logs and git-diffs sections and uses them as the keys for
+// output.git.sortByChanges, while every other section uses the raw name, so ask
+// git for the raw form.
 const GIT_RAW_PATH_ARGS = ['-c', 'core.quotePath=false'];
 const GIT_LOG_HARDENING_ARGS = ['--no-show-signature', '--no-ext-diff', '--no-textconv'];
 const GIT_DIFF_HARDENING_ARGS = ['--no-ext-diff', '--no-textconv'];
@@ -84,6 +85,7 @@ export const execGitDiff = async (
       '-C',
       directory,
       ...GIT_UNTRUSTED_CONFIG_ARGS,
+      ...GIT_RAW_PATH_ARGS,
       'diff',
       '--no-color', // Avoid ANSI color codes
       ...options,

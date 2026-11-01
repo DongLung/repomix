@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mergeConfigs } from '../../../src/config/configLoad.js';
 import { searchFiles } from '../../../src/core/file/fileSearch.js';
 import { createMockConfig, writeFixture } from '../../testing/testUtils.js';
 
@@ -133,5 +134,66 @@ describe('repomix dot-ignore spec', () => {
 
     expect(filePaths).toContain('keep.ts');
     expect(filePaths).not.toContain('noisy.draft');
+  });
+
+  // #959: ignore files must keep applying when customPatterns is also set.
+  describe('together with customPatterns', () => {
+    const noBaseline = { useGitignore: false, useDefaultPatterns: false };
+
+    it('applies .ignore and customPatterns from a config file', async () => {
+      await writeFixture(tmpDir, {
+        '.ignore': 'spec/data/\n',
+        'bin/test.sh': 'bin\n',
+        'spec/data/test.txt': 'data\n',
+        'src/main.js': 'main\n',
+      });
+
+      // Go through the config merge, as a repomix.config.json with customPatterns would
+      const merged = mergeConfigs(tmpDir, { ignore: { customPatterns: ['bin/'] } }, {});
+      const { filePaths } = await searchFiles(tmpDir, { ...merged, ignore: { ...merged.ignore, ...noBaseline } });
+
+      expect(filePaths).toContain('src/main.js');
+      expect(filePaths).not.toContain('bin/test.sh');
+      expect(filePaths).not.toContain('spec/data/test.txt');
+    });
+
+    it('applies .ignore, .repomixignore and customPatterns together', async () => {
+      await writeFixture(tmpDir, {
+        '.ignore': 'dist/\n',
+        '.repomixignore': 'tmp/\n',
+        'dist/bundle.js': 'dist\n',
+        'tmp/cache.dat': 'tmp\n',
+        'vendor/lib.js': 'vendor\n',
+        'src/index.js': 'src\n',
+      });
+
+      const { filePaths } = await searchFiles(
+        tmpDir,
+        createMockConfig({ ignore: { ...noBaseline, useDotIgnore: true, customPatterns: ['vendor/'] } }),
+      );
+
+      expect(filePaths).toContain('src/index.js');
+      expect(filePaths).not.toContain('dist/bundle.js');
+      expect(filePaths).not.toContain('tmp/cache.dat');
+      expect(filePaths).not.toContain('vendor/lib.js');
+    });
+
+    it('applies a nested .ignore with customPatterns', async () => {
+      await writeFixture(tmpDir, {
+        'src/.ignore': 'generated/\n',
+        'src/app.js': 'app\n',
+        'src/generated/output.js': 'generated\n',
+        'bin/run.sh': 'bin\n',
+      });
+
+      const { filePaths } = await searchFiles(
+        tmpDir,
+        createMockConfig({ ignore: { ...noBaseline, useDotIgnore: true, customPatterns: ['bin/'] } }),
+      );
+
+      expect(filePaths).toContain('src/app.js');
+      expect(filePaths).not.toContain('bin/run.sh');
+      expect(filePaths).not.toContain('src/generated/output.js');
+    });
   });
 });

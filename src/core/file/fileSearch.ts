@@ -241,7 +241,7 @@ export const searchFiles = async (
         logger.trace('[stdin mode] Explicit files (absolute):', explicitFiles);
 
         const relativePaths = explicitFiles.map((filePath) => {
-          const relativePath = path.relative(rootDir, filePath);
+          const relativePath = path.relative(rootDir, filePath).split(path.sep).join('/');
           // Escape the path to handle special characters
           return escapeGlobPattern(relativePath);
         });
@@ -406,6 +406,24 @@ export const parseIgnoreContent = (content: string): string[] => {
   }, []);
 };
 
+// Git matches an exclude pattern that has no slash in it against names at any depth,
+// whereas globby matches a bare pattern only at the top level of `cwd`. Without this,
+// `secret.txt` in .git/info/exclude leaves `sub/secret.txt` packed, even though the
+// identical pattern in .gitignore is respected at depth by globby's gitignore support.
+// Negations are skipped by the caller and never reach here.
+export const gitExcludePatternToGlob = (pattern: string): string => {
+  // A leading or inner slash anchors the pattern to the repository root. The exclude
+  // file is only read from `rootDir/.git`, so that root is globby's base: an inner-slash
+  // pattern already matches as-is, and a leading slash only needs dropping.
+  if (pattern.startsWith('/')) {
+    return pattern.slice(1);
+  }
+
+  const name = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
+
+  return name.includes('/') ? pattern : `**/${pattern}`;
+};
+
 /**
  * Prepares ignore context including patterns and file patterns with git worktree handling.
  * This logic is shared across searchFiles, listDirectories, and listFiles.
@@ -486,6 +504,8 @@ export const getIgnoreFilePatterns = async (config: RepomixConfigMerged): Promis
   //
   // .gitignore files are handled by globby's gitignore option (not ignoreFiles)
   // to properly respect parent directory .gitignore files, matching Git's behavior.
+  //
+  // These ignore files apply whether or not customPatterns is defined in the config.
 
   if (config.ignore.useDotIgnore) {
     ignoreFilePatterns.push('**/.ignore');
@@ -552,7 +572,13 @@ export const getIgnorePatterns = async (rootDir: string, config: RepomixConfigMe
       const excludePatterns = parseIgnoreContent(excludeFileContent);
 
       for (const pattern of excludePatterns) {
-        ignorePatterns.add(pattern);
+        // Skipped for the same reason as custom negations above. Git has no extglob, so
+        // every leading `!` here is a negation, `!(...)` included.
+        if (pattern.startsWith('!')) {
+          warnNegatedIgnorePatternOnce(pattern);
+          continue;
+        }
+        ignorePatterns.add(gitExcludePatternToGlob(pattern));
       }
     } catch (error) {
       // File might not exist or might not be accessible, which is fine

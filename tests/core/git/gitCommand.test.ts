@@ -96,6 +96,8 @@ file2.ts
         '/test/dir',
         '-c',
         'core.fsmonitor=',
+        '-c',
+        'core.quotePath=false',
         'diff',
         '--no-color',
         '--no-ext-diff',
@@ -722,8 +724,9 @@ describe.skipIf(process.platform === 'win32')(
 
 // End-to-end, nothing mocked: git C-quotes bytes outside ASCII by default
 // (core.quotePath=true), so a UTF-8 filename comes back as "\346\227\245...".
-// Repomix prints those paths in the git-logs section and uses them as the keys
-// for its change-count sort, so both commands must request git's raw-UTF-8 form.
+// Repomix prints those paths in the git-logs and git-diffs sections and uses them
+// as the keys for its change-count sort, so every command must request git's
+// raw-UTF-8 form.
 // POSIX-only: the filename is created as UTF-8 on disk; Windows filesystem
 // APIs and the child-process encoding are a separate concern.
 describe.skipIf(process.platform === 'win32')('gitCommand — non-ASCII filenames are emitted verbatim', () => {
@@ -761,5 +764,14 @@ describe.skipIf(process.platform === 'win32')('gitCommand — non-ASCII filename
 
     expect(log).toContain(unicodeName);
     expect(log).not.toContain('\\346');
+  });
+
+  test('execGitDiff returns the raw filename', async () => {
+    await fs.writeFile(path.join(repoDir, unicodeName), 'changed\n');
+
+    const diff = await execGitDiff(repoDir, [], { execFileAsync: realExec });
+
+    expect(diff).toContain(`diff --git a/${unicodeName} b/${unicodeName}`);
+    expect(diff).not.toContain('\\346');
   });
 });

@@ -108,9 +108,48 @@ export const extractRemoteHost = (remoteValue: string): string | null => {
     // the host is matched after a greedy colon-free user part. It can be a
     // bracketed IPv6 literal (user@[fd00:ec2::254]:path), so match a bracketed
     // group before falling back to a plain host.
-    const scpMatch = remoteValue.match(/^[^/:]+@(\[[^\]]+\]|[^/:@]+):/);
-    return scpMatch ? normalizeHost(scpMatch[1]) : null;
+    const scpHost = matchScpHost(remoteValue);
+    return scpHost === null ? null : normalizeHost(scpHost);
   }
+};
+
+/**
+ * Same result as matching /^[^/:]+@(\[[^\]]+\]|[^/:@]+):/ and taking group 1, in
+ * linear time. The regex backtracks over every `@` in the user part, which is
+ * quadratic on input like `.@[.@[.@[...`.
+ */
+export const matchScpHost = (value: string): string | null => {
+  // The user part may not contain `/` or `:`, so every candidate `@` sits before both.
+  let userEnd = 0;
+  while (userEnd < value.length && value[userEnd] !== '/' && value[userEnd] !== ':') {
+    userEnd++;
+  }
+  // nextClose[i] is the index of the first `]` at or after i, or -1.
+  const nextClose = new Array<number>(value.length + 1).fill(-1);
+  for (let i = value.length - 1; i >= 0; i--) {
+    nextClose[i] = value[i] === ']' ? i : nextClose[i + 1];
+  }
+  // The greedy user part tries the last `@` first, then earlier ones.
+  let isLastAt = true;
+  for (let at = userEnd - 1; at >= 1; at--) {
+    if (value[at] !== '@') {
+      continue;
+    }
+    // Bracketed IPv6 literal: `[` then at least one non-`]` character, `]`, `:`.
+    if (value[at + 1] === '[') {
+      const close = nextClose[at + 2];
+      if (close > at + 2 && value[close + 1] === ':') {
+        return value.slice(at + 1, close + 1);
+      }
+    }
+    // A plain host runs up to the next `/`, `:` or `@`, so it can only end in `:`
+    // after the last `@` of the user part.
+    if (isLastAt && userEnd > at + 1 && value[userEnd] === ':') {
+      return value.slice(at + 1, userEnd);
+    }
+    isLastAt = false;
+  }
+  return null;
 };
 
 export const isMetadataEndpoint = (host: string): boolean => BLOCKED_HOSTS.has(host) || LINK_LOCAL_IPV4_RE.test(host);

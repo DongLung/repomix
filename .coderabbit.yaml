@@ -1,5 +1,5 @@
 # CodeRabbit configuration file for Repomix project
-# See: https://docs.coderabbit.ai/getting-started/configure-coderabbit/
+# See: https://docs.coderabbit.ai/reference/configuration
 
 # Language configuration
 language: en-US
@@ -7,24 +7,81 @@ language: en-US
 # Review configuration
 reviews:
   # Review levels for different types of changes
-  profile: chill # Options: chill, assertive
+  profile: assertive # Options: quiet, chill, assertive
 
-  # Auto review only on PR creation, not on subsequent changes
   auto_review:
     enabled: true
     drafts: false
 
-    # Disable incremental reviews after PR creation
-    auto_incremental_review: false
+    # Re-review new pushes, so a request for changes is lifted once the fixes
+    # land (auto_approvals needs the latest commit reviewed)
+    auto_incremental_review: true
+    # Never stop re-reviewing, or a late fix push could leave changes requested
+    auto_pause_after_reviewed_commits: 0
 
-  # Request changes for critical issues
-  request_changes_workflow: true
+    # Dependency bot PRs are vetted separately before merging
+    ignore_usernames:
+      - renovate[bot]
+      - dependabot[bot]
+
+  # Request changes for critical issues, approve once they are resolved
+  # (formerly request_changes_workflow)
+  auto_approvals:
+    enabled: true
 
   # High-level summary for complex PRs
   high_level_summary: false
 
   # Poem style for fun summary (optional)
   poem: false
+
+  # Keep the walkthrough short
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+
+  # Lockfiles
+  path_filters:
+    - '!**/package-lock.json'
+
+  pre_merge_checks:
+    # Repomix does not require docstrings
+    docstrings:
+      mode: 'off'
+    # Project rules from CLAUDE.md
+    custom_checks:
+      - name: Docs in all locales
+        mode: warning
+        instructions: >-
+          Pass if the PR does not add, remove, or change a user-facing feature,
+          CLI option, config option, or MCP tool parameter. Otherwise pass only if
+          the docs for that change are updated in every language directory under
+          website/client/src/, not just en.
+      - name: Tests for behavior changes
+        mode: warning
+        instructions: >-
+          Pass if the PR does not change runtime behavior in src/ (for example,
+          it only changes tests, docs, comments, CI or tooling config,
+          dependencies, formatting, or code outside src/, or it is a pure
+          refactor). Otherwise pass only if a test under tests/ is added or
+          updated to cover the changed behavior.
+
+  tools:
+    # Biome and oxlint already run in CI
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    # Prose linters are noisy on the docs in 15 languages
+    languagetool:
+      enabled: false
+    vale:
+      enabled: false
+    markdownlint:
+      enabled: false
 
 # Chat configuration
 chat:

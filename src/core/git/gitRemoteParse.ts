@@ -49,10 +49,16 @@ const isAzureDevOpsUrl = (remoteValue: string): boolean => {
   }
 };
 
-export const parseRemoteValue = (
-  remoteValue: string,
-  refs: string[] = [],
-): { repoUrl: string; remoteBranch: string | undefined } => {
+export interface ParsedRemoteValue {
+  repoUrl: string;
+  remoteBranch: string | undefined;
+  // Path after the ref in a /tree/ or /blob/ URL (e.g. `clients/client-ses`).
+  // Repomix packs the whole repository, so callers only use this to warn.
+  // `kind` is unknown when the URL does not say (e.g. Bitbucket /src/).
+  subpath?: { path: string; kind: 'file' | 'directory' | 'unknown' };
+}
+
+export const parseRemoteValue = (remoteValue: string, refs: string[] = []): ParsedRemoteValue => {
   // Check the input and the resolved URL: shorthand expansion and git-url-parse
   // normalization can both change the host git will actually contact.
   assertNotMetadataEndpoint(remoteValue);
@@ -61,10 +67,51 @@ export const parseRemoteValue = (
   return parsed;
 };
 
-const parseRemoteValueInternal = (
+const SUBPATH_KINDS: Record<string, 'file' | 'directory'> = { tree: 'directory', blob: 'file', raw: 'file' };
+
+// git-url-parse's `filepath` cannot be used as-is: it keeps the query and fragment
+// (`?private_token=...`, `#L10`), keeps percent-encoding, and locates the ref by its
+// first occurrence, so an owner or repository named like the ref shifts the path.
+// Instead, find `<filepathtype>/<ref>/` in the URL pathname and take what follows.
+const extractSubpath = (
   remoteValue: string,
-  refs: string[],
-): { repoUrl: string; remoteBranch: string | undefined } => {
+  ref: string,
+  filepathtype: string | undefined,
+): Pick<ParsedRemoteValue, 'subpath'> => {
+  if (!filepathtype) {
+    return {};
+  }
+  let segments: string[];
+  try {
+    segments = new URL(remoteValue).pathname.split('/').filter(Boolean);
+  } catch {
+    return {};
+  }
+  const refSegments = ref.split('/');
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i] !== filepathtype) {
+      continue;
+    }
+    const refEnd = i + 1 + refSegments.length;
+    if (segments.slice(i + 1, refEnd).join('/') !== ref) {
+      continue;
+    }
+    const rawPath = segments.slice(refEnd).join('/');
+    if (!rawPath) {
+      return {};
+    }
+    let path = rawPath;
+    try {
+      path = decodeURIComponent(rawPath);
+    } catch {
+      // Keep the raw path when it is not valid percent-encoding
+    }
+    return { subpath: { path, kind: SUBPATH_KINDS[filepathtype] ?? 'unknown' } };
+  }
+  return {};
+};
+
+const parseRemoteValueInternal = (remoteValue: string, refs: string[]): ParsedRemoteValue => {
   if (isValidShorthand(remoteValue)) {
     logger.trace(`Formatting GitHub shorthand: ${remoteValue}`);
     return {
@@ -110,6 +157,7 @@ const parseRemoteValueInternal = (
       return {
         repoUrl: repoUrl,
         remoteBranch: parsedFields.ref,
+        ...extractSubpath(remoteValue, parsedFields.ref, parsedFields.filepathtype),
       };
     }
 

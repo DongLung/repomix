@@ -363,6 +363,139 @@ describe('remoteAction functions', () => {
       expect(execGitShallowCloneMock).toHaveBeenCalledTimes(1);
     });
 
+    test('warns that a path in a /tree/ URL is ignored and clones the branch', async () => {
+      const execGitShallowCloneMock = vi.fn(async () => {});
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+      await runRemoteAction('https://github.com/owner/repo/tree/main/clients/client-ses', {}, undefined, {
+        isGitInstalled: async () => true,
+        execGitShallowClone: execGitShallowCloneMock,
+        getRemoteRefs: async () => ['main'],
+        runDefaultAction: async () => createMockDefaultActionResult(),
+        downloadGitHubArchive: vi.fn(),
+        isGitHubRepository: vi.fn().mockReturnValue(false),
+        parseGitHubRepoInfo: vi.fn().mockReturnValue(null),
+        isArchiveDownloadSupported: vi.fn().mockReturnValue(false),
+        confirmRemoteConfigTrust: vi.fn(),
+      });
+
+      expect(execGitShallowCloneMock).toHaveBeenCalledWith(
+        'https://github.com/owner/repo.git',
+        expect.any(String),
+        'main',
+        undefined,
+        undefined,
+      );
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('--include "clients/client-ses/**"'));
+    });
+
+    test('warns about a path in the URL when the archive download succeeds', async () => {
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+      const downloadGitHubArchiveMock = vi.fn(async () => {});
+
+      await runRemoteAction('https://github.com/owner/repo/tree/main/some/path', { remoteBranch: 'main' }, undefined, {
+        isGitInstalled: async () => true,
+        execGitShallowClone: vi.fn(async () => {}),
+        getRemoteRefs: async () => ['main'],
+        runDefaultAction: async () => createMockDefaultActionResult(),
+        downloadGitHubArchive: downloadGitHubArchiveMock,
+        isGitHubRepository: vi.fn().mockReturnValue(true),
+        parseGitHubRepoInfo: vi.fn().mockReturnValue({ owner: 'owner', repo: 'repo', ref: 'main/some/path' }),
+        isArchiveDownloadSupported: vi.fn().mockReturnValue(true),
+        confirmRemoteConfigTrust: vi.fn(),
+      });
+
+      expect(downloadGitHubArchiveMock).toHaveBeenCalledWith(
+        expect.objectContaining({ ref: 'main' }),
+        expect.any(String),
+        expect.any(Object),
+        expect.any(Function),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('--include "some/path/**"'));
+    });
+
+    test('does not name a path it cannot split from an unknown ref', async () => {
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+      await runRemoteAction('https://github.com/owner/repo/blob/feature/x/a.ts', {}, undefined, {
+        isGitInstalled: async () => true,
+        execGitShallowClone: vi.fn(async () => {}),
+        getRemoteRefs: async () => ['main'],
+        runDefaultAction: async () => createMockDefaultActionResult(),
+        downloadGitHubArchive: vi.fn(async () => {}),
+        isGitHubRepository: vi.fn().mockReturnValue(true),
+        parseGitHubRepoInfo: vi.fn().mockReturnValue({ owner: 'owner', repo: 'repo' }),
+        isArchiveDownloadSupported: vi.fn().mockReturnValue(true),
+        confirmRemoteConfigTrust: vi.fn(),
+      });
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('The path in the remote URL is ignored'));
+      expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('x/a.ts'));
+    });
+
+    test.each([
+      ['a quote', 'a%22b'],
+      ['a comma', 'a,b'],
+      ['a glob character', 'a*b'],
+      ['shell syntax', '%24(x)'],
+      ['a control character', 'a%1Bb'],
+    ])('does not echo a path containing %s', async (_label, segment) => {
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+      await runRemoteAction(`https://github.com/owner/repo/tree/main/${segment}`, {}, undefined, {
+        isGitInstalled: async () => true,
+        execGitShallowClone: vi.fn(async () => {}),
+        getRemoteRefs: async () => ['main'],
+        runDefaultAction: async () => createMockDefaultActionResult(),
+        downloadGitHubArchive: vi.fn(),
+        isGitHubRepository: vi.fn().mockReturnValue(false),
+        parseGitHubRepoInfo: vi.fn().mockReturnValue(null),
+        isArchiveDownloadSupported: vi.fn().mockReturnValue(false),
+        confirmRemoteConfigTrust: vi.fn(),
+      });
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('The path in the remote URL is ignored'));
+      expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('--include "'));
+    });
+
+    test('suggests --include for paths with route-group parentheses and brackets', async () => {
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+      await runRemoteAction('https://github.com/owner/repo/tree/main/app/(marketing)/[slug]', {}, undefined, {
+        isGitInstalled: async () => true,
+        execGitShallowClone: vi.fn(async () => {}),
+        getRemoteRefs: async () => ['main'],
+        runDefaultAction: async () => createMockDefaultActionResult(),
+        downloadGitHubArchive: vi.fn(),
+        isGitHubRepository: vi.fn().mockReturnValue(false),
+        parseGitHubRepoInfo: vi.fn().mockReturnValue(null),
+        isArchiveDownloadSupported: vi.fn().mockReturnValue(false),
+        confirmRemoteConfigTrust: vi.fn(),
+      });
+
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('--include "app/(marketing)/[slug]/**"'));
+    });
+
+    test('does not warn about a path for a plain branch URL', async () => {
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+      await runRemoteAction('https://github.com/owner/repo/tree/main', {}, undefined, {
+        isGitInstalled: async () => true,
+        execGitShallowClone: vi.fn(async () => {}),
+        getRemoteRefs: async () => ['main'],
+        runDefaultAction: async () => createMockDefaultActionResult(),
+        downloadGitHubArchive: vi.fn(),
+        isGitHubRepository: vi.fn().mockReturnValue(false),
+        parseGitHubRepoInfo: vi.fn().mockReturnValue(null),
+        isArchiveDownloadSupported: vi.fn().mockReturnValue(false),
+        confirmRemoteConfigTrust: vi.fn(),
+      });
+
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
     test('does not fall back to git clone when the archive download is cancelled', async () => {
       const controller = new AbortController();
       let tempDirPath = '';

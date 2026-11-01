@@ -3,6 +3,7 @@ import {
   assertNotMetadataEndpoint,
   extractRemoteHost,
   isMetadataEndpoint,
+  matchScpHost,
 } from '../../../src/core/git/gitMetadataEndpoint.js';
 import { RepomixError } from '../../../src/shared/errorHandle.js';
 
@@ -48,6 +49,12 @@ describe('gitMetadataEndpoint', () => {
     it('canonicalizes an uncompressed IPv6 spelling before comparing', () => {
       expect(extractRemoteHost('git@[0:0:0:0:0:ffff:a9fe:a9fe]:owner/repo.git')).toBe('169.254.169.254');
       expect(extractRemoteHost('git@[fd00:0ec2:0:0:0:0:0:0254]:owner/repo.git')).toBe('fd00:ec2::254');
+    });
+
+    it('reads scp-like hosts without backtracking on repeated @[ input', () => {
+      const start = performance.now();
+      expect(extractRemoteHost('.@['.repeat(50_000))).toBeNull();
+      expect(performance.now() - start).toBeLessThan(1000);
     });
 
     it('treats everything before the last @ as the user, the way ssh does', () => {
@@ -128,6 +135,26 @@ describe('gitMetadataEndpoint', () => {
     it('allows an ordinary remote', () => {
       expect(() => assertNotMetadataEndpoint('https://github.com/owner/repo.git')).not.toThrow();
       expect(() => assertNotMetadataEndpoint('owner/repo')).not.toThrow();
+    });
+  });
+
+  describe('matchScpHost', () => {
+    // matchScpHost replaces /^[^/:]+@(\[[^\]]+\]|[^/:@]+):/ (quadratic on some
+    // inputs). Compare the two on every short string over the characters that matter.
+    it('returns the same host as the regex it replaces', () => {
+      const regex = /^[^/:]+@(\[[^\]]+\]|[^/:@]+):/;
+      const alphabet = ['@', '[', ']', ':', '/', 'a'];
+      const visit = (value: string): void => {
+        if (value.length > 0) {
+          expect(matchScpHost(value), JSON.stringify(value)).toBe(value.match(regex)?.[1] ?? null);
+        }
+        if (value.length < 7) {
+          for (const char of alphabet) {
+            visit(value + char);
+          }
+        }
+      };
+      visit('');
     });
   });
 });

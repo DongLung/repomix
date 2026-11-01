@@ -71,4 +71,21 @@ describe('negated custom ignore patterns', () => {
     expect(filePaths).toEqual(['a.ts']);
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it('skips negations in .git/info/exclude and still applies the rest at any depth', async () => {
+    await writeFixture(tmpDir, {
+      '.git/info/exclude': 'secret.txt\n!exclude-keep.txt\n',
+      'secret.txt': 'x\n',
+      'sub/secret.txt': 'x\n',
+      'exclude-keep.txt': 'x\n',
+      'sub/exclude-keep.txt': 'x\n',
+    });
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const { filePaths } = await searchFiles(tmpDir, createMockConfig());
+
+    expect(filePaths).toEqual(['sub/exclude-keep.txt', 'exclude-keep.txt']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('"!exclude-keep.txt"');
+  });
 });
