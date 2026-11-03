@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { getVersion } from '../core/file/packageJsonParse.js';
 import { logger } from '../shared/logger.js';
+import { nodeTimers } from '../shared/timers.js';
 import { MCP_SERVER_ICONS } from './mcpServerIcons.js';
 import { registerPackRemoteRepositoryPrompt } from './prompts/packRemoteRepositoryPrompts.js';
 import { registerAttachPackedOutputTool } from './tools/attachPackedOutputTool.js';
@@ -75,8 +76,12 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * reading the package version, is resolved by the caller beforehand. Shared state like
  * the output file registry lives at module scope, so it is kept across instances.
  */
-export const createMcpServer = (version: string, config: McpServerConfig = defaultMcpServerConfig()) => {
-  const mcpServer = new McpServer(
+export const createMcpServer = (
+  version: string,
+  config: McpServerConfig = defaultMcpServerConfig(),
+  deps = { McpServer },
+) => {
+  const mcpServer = new deps.McpServer(
     {
       name: 'repomix-mcp-server',
       title: 'Repomix',
@@ -130,8 +135,10 @@ export const runMcpServer = async (
   deps = {
     getVersion,
     serveStdio,
+    createMcpServer,
     createStdioTransport: () => new StdioServerTransport(),
     shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+    timers: nodeTimers,
   },
 ) => {
   const config: McpServerConfig = {
@@ -147,7 +154,7 @@ export const runMcpServer = async (
 
     // serveStdio picks the protocol era from the opening message: 2026-07-28 clients get
     // the new revision, `initialize`-based (2025-era) clients are served as before.
-    const handle = deps.serveStdio(() => createMcpServer(version, config), {
+    const handle = deps.serveStdio(() => deps.createMcpServer(version, config), {
       transport,
       onerror: (error) => logger.trace('MCP stdio transport error:', error),
     });
@@ -158,7 +165,7 @@ export const runMcpServer = async (
       shuttingDown = true;
       let timer: NodeJS.Timeout | undefined;
       const timedOut = new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), deps.shutdownTimeoutMs);
+        timer = deps.timers.setTimeout(() => resolve('timeout'), deps.shutdownTimeoutMs);
         timer.unref();
       });
       try {
@@ -171,7 +178,7 @@ export const runMcpServer = async (
         logger.error('Error during MCP server shutdown:', error);
         processExit(1);
       } finally {
-        clearTimeout(timer);
+        deps.timers.clearTimeout(timer);
       }
     };
 

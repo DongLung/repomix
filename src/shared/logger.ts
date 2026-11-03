@@ -125,9 +125,9 @@ const isValidLogLevel = (level: number): level is RepomixLogLevel => {
   );
 };
 
-export const setLogLevelByWorkerData = () => {
+export const setLogLevelByWorkerData = (deps = { workerData, env: process.env }) => {
   // Try to get log level from environment variable first (for child_process workers)
-  const envLogLevel = process.env.REPOMIX_LOG_LEVEL;
+  const envLogLevel = deps.env.REPOMIX_LOG_LEVEL;
   if (envLogLevel !== undefined) {
     const logLevel = Number(envLogLevel);
     if (!Number.isNaN(logLevel) && isValidLogLevel(logLevel)) {
@@ -137,8 +137,8 @@ export const setLogLevelByWorkerData = () => {
   }
 
   // Fallback to workerData for worker_threads
-  if (Array.isArray(workerData) && workerData.length > 1 && workerData[1]?.logLevel !== undefined) {
-    const logLevel = workerData[1].logLevel;
+  if (Array.isArray(deps.workerData) && deps.workerData.length > 1 && deps.workerData[1]?.logLevel !== undefined) {
+    const logLevel = deps.workerData[1].logLevel;
     if (isValidLogLevel(logLevel)) {
       setLogLevel(logLevel);
     }

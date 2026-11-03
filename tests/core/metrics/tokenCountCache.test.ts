@@ -4,8 +4,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetTokenCountCacheForTests,
+  __setTokenCountCacheEnvForTests,
   contentCacheKey,
   getCached,
+  getCacheFilePath,
   getRepoSeenMarkerPath,
   isCacheDisabled,
   loadTokenCountCache,
@@ -15,32 +17,24 @@ import {
   tokenCountCacheFileExistsSync,
   tokenCountCacheSeenMarkerExistsSync,
 } from '../../../src/core/metrics/tokenCountCache.js';
+import { getRepomixTmpDir } from '../../../src/shared/tmpDir.js';
 
 describe('tokenCountCache', () => {
   let tmpDir: string;
   let cacheFile: string;
-  const originalDisableEnv = process.env.REPOMIX_TOKEN_CACHE;
-  const originalPathEnv = process.env.REPOMIX_TOKEN_CACHE_PATH;
+  // The env the cache reads its switches from; starts enabled and pointed at the temp file.
+  let env: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repomix-cache-test-'));
     cacheFile = path.join(tmpDir, 'token-counts.json');
-    process.env.REPOMIX_TOKEN_CACHE_PATH = cacheFile;
-    delete process.env.REPOMIX_TOKEN_CACHE;
+    env = { REPOMIX_TOKEN_CACHE_PATH: cacheFile };
+    __setTokenCountCacheEnvForTests(env);
     __resetTokenCountCacheForTests();
   });
 
   afterEach(async () => {
-    if (originalDisableEnv === undefined) {
-      delete process.env.REPOMIX_TOKEN_CACHE;
-    } else {
-      process.env.REPOMIX_TOKEN_CACHE = originalDisableEnv;
-    }
-    if (originalPathEnv === undefined) {
-      delete process.env.REPOMIX_TOKEN_CACHE_PATH;
-    } else {
-      process.env.REPOMIX_TOKEN_CACHE_PATH = originalPathEnv;
-    }
+    __setTokenCountCacheEnvForTests();
     __resetTokenCountCacheForTests();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -136,6 +130,24 @@ describe('tokenCountCache', () => {
     });
   });
 
+  describe('cache location and save failures', () => {
+    it('defaults to a token-counts.json under the repomix temp dir without an override', () => {
+      __setTokenCountCacheEnvForTests({});
+      expect(path.basename(getCacheFilePath())).toBe('token-counts.json');
+      expect(getCacheFilePath().startsWith(getRepomixTmpDir() + path.sep)).toBe(true);
+    });
+
+    it('does not throw when the cache directory cannot be created', async () => {
+      const blocker = path.join(tmpDir, 'not-a-dir');
+      await fs.writeFile(blocker, '');
+      env.REPOMIX_TOKEN_CACHE_PATH = path.join(blocker, 'token-counts.json');
+      setCached(contentCacheKey('o200k_base', 'x'), 1);
+
+      await expect(saveTokenCountCache(['/some/repo'])).resolves.toBeUndefined();
+      expect(tokenCountCacheSeenMarkerExistsSync(['/some/repo'])).toBe(false);
+    });
+  });
+
   describe('FIFO eviction', () => {
     it('drops the oldest entries once the cap is exceeded on save', async () => {
       // Use a stub cap by directly inserting MAX + 5 entries
@@ -159,19 +171,19 @@ describe('tokenCountCache', () => {
 
   describe('disable switch', () => {
     it('reports disabled when REPOMIX_TOKEN_CACHE=0', () => {
-      process.env.REPOMIX_TOKEN_CACHE = '0';
+      env.REPOMIX_TOKEN_CACHE = '0';
       expect(isCacheDisabled()).toBe(true);
     });
 
     it('treats unset and other values as enabled', () => {
-      delete process.env.REPOMIX_TOKEN_CACHE;
+      delete env.REPOMIX_TOKEN_CACHE;
       expect(isCacheDisabled()).toBe(false);
-      process.env.REPOMIX_TOKEN_CACHE = '1';
+      env.REPOMIX_TOKEN_CACHE = '1';
       expect(isCacheDisabled()).toBe(false);
     });
 
     it('skips load and save when disabled', async () => {
-      process.env.REPOMIX_TOKEN_CACHE = '0';
+      env.REPOMIX_TOKEN_CACHE = '0';
       const key = contentCacheKey('o200k_base', 'hello');
       setCached(key, 99);
       await saveTokenCountCache();
@@ -184,7 +196,7 @@ describe('tokenCountCache', () => {
     });
 
     it('also disables the in-memory map so long-running processes do not grow unbounded', async () => {
-      process.env.REPOMIX_TOKEN_CACHE = '0';
+      env.REPOMIX_TOKEN_CACHE = '0';
       await loadTokenCountCache();
       const key = contentCacheKey('o200k_base', 'memory');
       setCached(key, 11);
@@ -195,7 +207,7 @@ describe('tokenCountCache', () => {
     it('honors REPOMIX_TOKEN_CACHE=0 even when setCached/getCached run before load', () => {
       // Order-independence: a caller that bypasses loadTokenCountCache (or
       // calls setCached before load resolves) must still respect the env var.
-      process.env.REPOMIX_TOKEN_CACHE = '0';
+      env.REPOMIX_TOKEN_CACHE = '0';
       const key = contentCacheKey('o200k_base', 'pre-load');
       setCached(key, 42);
       expect(getCached(key)).toBeUndefined();
@@ -296,6 +308,27 @@ describe('tokenCountCache', () => {
       // No setCached → save short-circuits without writing the cache file
       // or touching the marker. Both must remain absent.
       await saveTokenCountCache(repo);
+
+      expect(tokenCountCacheFileExistsSync()).toBe(false);
+      expect(tokenCountCacheSeenMarkerExistsSync(repo)).toBe(false);
+    });
+
+    it('creates the marker for a repo when the shared cache already exists but nothing is dirty', async () => {
+      // Upgrade path: a cache written by a release without markers must still mark the repo as seen.
+      const repo = ['/some/repo'];
+      await fs.writeFile(cacheFile, JSON.stringify({ version: 1, entries: {} }));
+
+      await saveTokenCountCache(repo);
+
+      expect(tokenCountCacheSeenMarkerExistsSync(repo)).toBe(true);
+    });
+
+    it('reports cold-likely when the cache is disabled even if the marker exists', async () => {
+      const repo = ['/some/repo'];
+      setCached(contentCacheKey('o200k_base', 'a'), 1);
+      await saveTokenCountCache(repo);
+
+      env.REPOMIX_TOKEN_CACHE = '0';
 
       expect(tokenCountCacheFileExistsSync()).toBe(false);
       expect(tokenCountCacheSeenMarkerExistsSync(repo)).toBe(false);

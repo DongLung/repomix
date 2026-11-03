@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   isExplicitRemoteUrl,
   isGitHubRepository,
@@ -6,12 +6,16 @@ import {
   parseRemoteValue,
 } from '../../../src/core/git/gitRemoteParse.js';
 import { isValidRemoteValue } from '../../../src/index.js';
-
-vi.mock('../../../src/shared/logger');
+import { silenceLogger } from '../../testing/loggerDoubles.js';
 
 describe('remoteAction functions', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    silenceLogger();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('parseRemoteValue', () => {
@@ -362,6 +366,10 @@ describe('remoteAction functions', () => {
     test('should return null for invalid URLs', () => {
       const result = parseGitHubRepoInfo('invalid-url');
       expect(result).toBeNull();
+    });
+
+    test('should return null for non-GitHub SSH URLs', () => {
+      expect(parseGitHubRepoInfo('git@gitlab.com:user/repo.git')).toBeNull();
     });
 
     test('should handle git@ URLs', () => {

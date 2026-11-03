@@ -1,10 +1,11 @@
 import { Transform, Writable } from 'node:stream';
-import type { pipeline as pipelineType } from 'node:stream/promises';
+import { type pipeline as pipelineType, pipeline as realPipeline } from 'node:stream/promises';
 import type * as zlib from 'node:zlib';
 import type { extract as tarExtractType } from 'tar';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { createArchiveEntryFilter as createArchiveEntryFilterType } from '../../../src/core/git/archiveEntryFilter.js';
 import {
+  type ArchiveDownloadDeps,
   type ArchiveDownloadOptions,
   downloadGitHubArchive,
   isArchiveDownloadSupported,
@@ -12,60 +13,51 @@ import {
 } from '../../../src/core/git/gitHubArchive.js';
 import type { GitHubRepoInfo } from '../../../src/core/git/gitRemoteParse.js';
 import { RepomixError } from '../../../src/shared/errorHandle.js';
-
-// Mock modules
-vi.mock('../../../src/shared/logger');
-
-// Type for the deps parameter of downloadGitHubArchive
-interface MockDeps {
-  fetch: typeof globalThis.fetch;
-  pipeline: typeof pipelineType;
-  Transform: typeof Transform;
-  tarExtract: typeof tarExtractType;
-  createGunzip: typeof zlib.createGunzip;
-  createArchiveEntryFilter: typeof createArchiveEntryFilterType;
-}
+import { type MockedDeps, mockOverloaded } from '../../testing/depsDoubles.js';
+import { silenceLogger } from '../../testing/loggerDoubles.js';
 
 // Simple test data
 const mockStreamData = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]); // gzip magic bytes
 
 describe('gitHubArchive', () => {
-  let mockFetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
-  let mockPipeline: ReturnType<typeof vi.fn<typeof pipelineType>>;
-  let mockTarExtract: ReturnType<typeof vi.fn<typeof tarExtractType>>;
-  let mockCreateGunzip: ReturnType<typeof vi.fn<typeof zlib.createGunzip>>;
-  let mockCreateArchiveEntryFilter: ReturnType<typeof vi.fn<typeof createArchiveEntryFilterType>>;
-  let mockDeps: MockDeps;
+  let mockDeps: MockedDeps<ArchiveDownloadDeps>;
+  let mockFetch: MockedDeps<ArchiveDownloadDeps>['fetch'];
+  let mockPipeline: MockedDeps<ArchiveDownloadDeps>['pipeline'];
 
   beforeEach(() => {
     vi.clearAllMocks();
+    silenceLogger();
 
-    mockFetch = vi.fn<typeof globalThis.fetch>();
-    mockPipeline = vi.fn<typeof pipelineType>().mockResolvedValue(undefined);
-    mockTarExtract = vi.fn<typeof tarExtractType>().mockReturnValue(
+    mockDeps = {
+      fetch: vi.fn<typeof globalThis.fetch>(),
+      pipeline: mockOverloaded<typeof pipelineType>(),
+      Transform,
+      tarExtract: mockOverloaded<typeof tarExtractType>(),
+      createGunzip: mockOverloaded<typeof zlib.createGunzip>(),
+      createArchiveEntryFilter: vi.fn<typeof createArchiveEntryFilterType>(() => () => true),
+    };
+    mockFetch = mockDeps.fetch;
+    mockPipeline = mockDeps.pipeline;
+    mockPipeline.mockResolvedValue(undefined);
+    // Stream stand-ins: only their place in the pipeline matters, since pipeline itself is a double.
+    mockDeps.tarExtract.mockReturnValue(
       new Writable({
         write(_chunk, _enc, cb) {
           cb();
         },
       }) as unknown as ReturnType<typeof tarExtractType>,
     );
-    mockCreateGunzip = vi.fn<typeof zlib.createGunzip>().mockReturnValue(
+    mockDeps.createGunzip.mockReturnValue(
       new Transform({
         transform(chunk, _enc, cb) {
           cb(null, chunk);
         },
       }) as unknown as ReturnType<typeof zlib.createGunzip>,
     );
-    mockCreateArchiveEntryFilter = vi.fn<typeof createArchiveEntryFilterType>().mockReturnValue(() => true);
+  });
 
-    mockDeps = {
-      fetch: mockFetch,
-      pipeline: mockPipeline as unknown as typeof pipelineType,
-      Transform,
-      tarExtract: mockTarExtract as unknown as typeof tarExtractType,
-      createGunzip: mockCreateGunzip as unknown as typeof zlib.createGunzip,
-      createArchiveEntryFilter: mockCreateArchiveEntryFilter,
-    };
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('downloadGitHubArchive', () => {
@@ -81,19 +73,20 @@ describe('gitHubArchive', () => {
       retries: 3,
     };
 
-    const createMockResponse = (overrides: Partial<Response> = {}): Response => {
-      return {
-        ok: true,
-        status: 200,
-        headers: new Map([['content-length', mockStreamData.length.toString()]]),
-        body: new ReadableStream({
+    // A real Response that streams the gzip bytes with a content-length, or has no body at all.
+    const createMockResponse = ({ status = 200, body }: { status?: number; body?: null } = {}): Response => {
+      if (body === null) {
+        return new Response(null, { status });
+      }
+      return new Response(
+        new ReadableStream({
           start(controller) {
             controller.enqueue(mockStreamData);
             controller.close();
           },
         }),
-        ...overrides,
-      } as unknown as Response;
+        { status, headers: { 'content-length': mockStreamData.length.toString() } },
+      );
     };
 
     test('should successfully download and extract archive', async () => {
@@ -110,7 +103,7 @@ describe('gitHubArchive', () => {
       );
 
       // Verify tar extract was called with correct options including filter
-      expect(mockTarExtract).toHaveBeenCalledWith({
+      expect(mockDeps.tarExtract).toHaveBeenCalledWith({
         cwd: mockTargetDirectory,
         strip: 1,
         filter: expect.any(Function),
@@ -128,6 +121,89 @@ describe('gitHubArchive', () => {
 
       expect(mockFetch).toHaveBeenCalled();
       expect(mockPipeline).toHaveBeenCalled();
+    });
+
+    describe('download progress reporting', () => {
+      // A body that arrives in several chunks, optionally with a content-length header.
+      const createChunkedResponse = (chunkSizes: number[], withContentLength: boolean): Response => {
+        const total = chunkSizes.reduce((sum, size) => sum + size, 0);
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              for (const size of chunkSizes) {
+                controller.enqueue(new Uint8Array(size));
+              }
+              controller.close();
+            },
+          }),
+          { headers: withContentLength ? { 'content-length': String(total) } : {} },
+        );
+      };
+
+      // Drive the body through the real progress stream (gunzip/tar are skipped) so its
+      // transform and flush callbacks actually run.
+      const runThroughProgressStream = () => {
+        mockPipeline.mockImplementation((async (source: NodeJS.ReadableStream, progress: NodeJS.ReadWriteStream) => {
+          const sink = new Writable({
+            write(_chunk, _enc, cb) {
+              cb();
+            },
+          });
+          await realPipeline(source, progress, sink);
+        }) as unknown as typeof pipelineType);
+      };
+
+      // Each chunk reads the clock once; return the given timestamps in order.
+      const createClock = (timestamps: number[]) => {
+        let index = 0;
+        return () => timestamps[Math.min(index++, timestamps.length - 1)];
+      };
+
+      test('throttles updates to one per 100ms and reports 100% when the stream ends', async () => {
+        runThroughProgressStream();
+        mockFetch.mockResolvedValue(createChunkedResponse([10, 10, 10, 10], true));
+        const onProgress = vi.fn<ProgressCallback>();
+
+        await downloadGitHubArchive(
+          mockRepoInfo,
+          mockTargetDirectory,
+          mockOptions,
+          onProgress,
+          // 50ms: too soon, 120ms: reported, 180ms: within 100ms of the last report, 300ms: reported
+          { ...mockDeps, now: createClock([50, 120, 180, 300]) },
+        );
+
+        expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+          { downloaded: 20, total: 40, percentage: 50 },
+          { downloaded: 40, total: 40, percentage: 100 },
+          { downloaded: 40, total: 40, percentage: 100 },
+        ]);
+      });
+
+      test('reports downloaded bytes without a percentage when content-length is missing', async () => {
+        runThroughProgressStream();
+        mockFetch.mockResolvedValue(createChunkedResponse([5, 7], false));
+        const onProgress = vi.fn<ProgressCallback>();
+
+        await downloadGitHubArchive(mockRepoInfo, mockTargetDirectory, mockOptions, onProgress, {
+          ...mockDeps,
+          now: createClock([200, 250]),
+        });
+
+        expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+          { downloaded: 5, total: null, percentage: null },
+          { downloaded: 12, total: null, percentage: null },
+        ]);
+      });
+
+      test('streams the archive without a progress callback', async () => {
+        runThroughProgressStream();
+        mockFetch.mockResolvedValue(createChunkedResponse([10, 10], true));
+
+        await expect(
+          downloadGitHubArchive(mockRepoInfo, mockTargetDirectory, mockOptions, undefined, mockDeps),
+        ).resolves.toBeUndefined();
+      });
     });
 
     test('gives the caller signal to the extraction pipeline', async () => {
@@ -183,11 +259,9 @@ describe('gitHubArchive', () => {
       mockFetch
         .mockResolvedValueOnce(
           createMockResponse({
-            ok: false,
             status: 404,
-            headers: new Map(),
             body: null,
-          } as unknown as Partial<Response>),
+          }),
         )
         .mockResolvedValueOnce(createMockResponse());
 
@@ -227,7 +301,7 @@ describe('gitHubArchive', () => {
     });
 
     test('should handle missing response body', async () => {
-      mockFetch.mockResolvedValue(createMockResponse({ body: null } as unknown as Partial<Response>));
+      mockFetch.mockResolvedValue(createMockResponse({ body: null }));
 
       await expect(
         downloadGitHubArchive(mockRepoInfo, mockTargetDirectory, { retries: 1 }, undefined, mockDeps),

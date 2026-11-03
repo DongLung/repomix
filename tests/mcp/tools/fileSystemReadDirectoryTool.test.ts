@@ -1,26 +1,36 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type fs from 'node:fs/promises';
+import type { CallToolResult } from '@modelcontextprotocol/server';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { registerFileSystemReadDirectoryTool } from '../../../src/mcp/tools/fileSystemReadDirectoryTool.js';
+import { logger } from '../../../src/shared/logger.js';
+import { type MockedDeps, mockOverloaded } from '../../testing/depsDoubles.js';
+import { createMcpServerDouble, type McpServerDouble } from '../../testing/mcpServerDoubles.js';
 
-vi.mock('node:fs/promises');
-vi.mock('node:path');
+type Deps = NonNullable<Parameters<typeof registerFileSystemReadDirectoryTool>[2]>;
+type Stats = Awaited<ReturnType<Deps['stat']>>;
+type Dirents = Awaited<ReturnType<Deps['readdir']>>;
 
 describe('FileSystemReadDirectoryTool', () => {
-  const mockServer = {
-    registerTool: vi.fn().mockReturnThis(),
-  } as unknown as McpServer;
+  let mockServer: McpServerDouble;
 
   let toolHandler: (args: { path: string }) => Promise<CallToolResult>;
+  let deps: MockedDeps<Deps>;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    registerFileSystemReadDirectoryTool(mockServer);
-    toolHandler = (mockServer.registerTool as ReturnType<typeof vi.fn>).mock.calls[0][2];
+    vi.spyOn(logger, 'trace').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
+    deps = {
+      stat: mockOverloaded<typeof fs.stat>(),
+      readdir: mockOverloaded<typeof fs.readdir>(),
+    };
+    mockServer = createMcpServerDouble();
+    registerFileSystemReadDirectoryTool(mockServer.server, undefined, deps);
+    toolHandler = mockServer.toolHandler();
+  });
 
-    // Default mock for path.isAbsolute
-    vi.mocked(path.isAbsolute).mockImplementation((p: string) => p.startsWith('/'));
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   test('should register tool with correct parameters', () => {
@@ -33,7 +43,6 @@ describe('FileSystemReadDirectoryTool', () => {
 
   test('should handle relative path error', async () => {
     const testPath = 'relative/path';
-    vi.mocked(path.isAbsolute).mockReturnValue(false);
 
     const result = await toolHandler({ path: testPath });
 
@@ -50,12 +59,9 @@ describe('FileSystemReadDirectoryTool', () => {
 
   test('should handle non-existent directory', async () => {
     const testPath = '/non/existent/dir';
-    vi.mocked(path.isAbsolute).mockReturnValue(true);
     // Realistic ENOENT (with .code) — a missing dir maps to "not found"; other stat
     // errors (e.g. EACCES) now bubble to the outer catch instead of being masked.
-    vi.mocked(fs.stat).mockRejectedValue(
-      Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
-    );
+    deps.stat.mockRejectedValue(Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }));
 
     const result = await toolHandler({ path: testPath });
 
@@ -72,8 +78,7 @@ describe('FileSystemReadDirectoryTool', () => {
 
   test('should error when path points to a file', async () => {
     const testPath = '/some/file.txt';
-    vi.mocked(path.isAbsolute).mockReturnValue(true);
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as Awaited<ReturnType<typeof fs.stat>>);
+    deps.stat.mockResolvedValue({ isDirectory: () => false } as Stats);
 
     const result = await toolHandler({ path: testPath });
 
@@ -84,13 +89,12 @@ describe('FileSystemReadDirectoryTool', () => {
 
   test('should list directory contents with [FILE]/[DIR] prefixes', async () => {
     const testPath = '/some/dir';
-    vi.mocked(path.isAbsolute).mockReturnValue(true);
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as Awaited<ReturnType<typeof fs.stat>>);
-    vi.mocked(fs.readdir).mockResolvedValue([
+    deps.stat.mockResolvedValue({ isDirectory: () => true } as Stats);
+    deps.readdir.mockResolvedValue([
       { name: 'a.ts', isFile: () => true, isDirectory: () => false },
       { name: 'subdir', isFile: () => false, isDirectory: () => true },
       { name: 'b.md', isFile: () => true, isDirectory: () => false },
-    ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+    ] as unknown as Dirents);
 
     const result = await toolHandler({ path: testPath });
 
@@ -105,9 +109,8 @@ describe('FileSystemReadDirectoryTool', () => {
 
   test('should report empty directory placeholder', async () => {
     const testPath = '/empty/dir';
-    vi.mocked(path.isAbsolute).mockReturnValue(true);
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as Awaited<ReturnType<typeof fs.stat>>);
-    vi.mocked(fs.readdir).mockResolvedValue([] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+    deps.stat.mockResolvedValue({ isDirectory: () => true } as Stats);
+    deps.readdir.mockResolvedValue([] as Dirents);
 
     const result = await toolHandler({ path: testPath });
 
@@ -119,9 +122,8 @@ describe('FileSystemReadDirectoryTool', () => {
 
   test('should report readdir failures via the outer catch', async () => {
     const testPath = '/some/dir';
-    vi.mocked(path.isAbsolute).mockReturnValue(true);
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as Awaited<ReturnType<typeof fs.stat>>);
-    vi.mocked(fs.readdir).mockRejectedValue(new Error('EACCES'));
+    deps.stat.mockResolvedValue({ isDirectory: () => true } as Stats);
+    deps.readdir.mockRejectedValue(new Error('EACCES'));
 
     const result = await toolHandler({ path: testPath });
 

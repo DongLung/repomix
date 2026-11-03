@@ -1,35 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { calculateOutputMetrics } from '../../../src/core/metrics/calculateOutputMetrics.js';
 import type { MetricsTaskRunner } from '../../../src/core/metrics/metricsWorkerRunner.js';
-import {
-  countTokens,
-  type MetricsWorkerTask,
-  type TokenCountTask,
-} from '../../../src/core/metrics/workers/calculateMetricsWorker.js';
+import type { MetricsWorkerTask, TokenCountTask } from '../../../src/core/metrics/workers/calculateMetricsWorker.js';
 import { logger } from '../../../src/shared/logger.js';
 import type { WorkerOptions } from '../../../src/shared/processConcurrency.js';
-
-vi.mock('../../../src/shared/logger');
-
-const mockInitTaskRunner = (_options: WorkerOptions): MetricsTaskRunner => {
-  return {
-    run: async (task: MetricsWorkerTask) => {
-      return await countTokens(task as TokenCountTask);
-    },
-    cleanup: async () => {
-      // Mock cleanup - no-op for tests
-    },
-  };
-};
+import { silenceLogger } from '../../testing/loggerDoubles.js';
+import { createInlineMetricsTaskRunner } from '../../testing/taskRunnerDoubles.js';
 
 describe('calculateOutputMetrics', () => {
+  beforeEach(() => {
+    silenceLogger();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should calculate metrics for output content', async () => {
     const content = 'test content';
     const encoding = 'o200k_base';
     const path = 'test.txt';
 
     const result = await calculateOutputMetrics(content, encoding, path, {
-      taskRunner: mockInitTaskRunner({ numOfTasks: 1, workerType: 'calculateMetrics', runtime: 'worker_threads' }),
+      taskRunner: createInlineMetricsTaskRunner(),
     });
 
     expect(result).toBe(2); // 'test content' should be counted as 2 tokens
@@ -40,7 +33,7 @@ describe('calculateOutputMetrics', () => {
     const encoding = 'o200k_base';
 
     const result = await calculateOutputMetrics(content, encoding, undefined, {
-      taskRunner: mockInitTaskRunner({ numOfTasks: 1, workerType: 'calculateMetrics', runtime: 'worker_threads' }),
+      taskRunner: createInlineMetricsTaskRunner(),
     });
 
     expect(result).toBe(2);
@@ -76,7 +69,7 @@ describe('calculateOutputMetrics', () => {
     const encoding = 'o200k_base';
 
     const result = await calculateOutputMetrics(content, encoding, undefined, {
-      taskRunner: mockInitTaskRunner({ numOfTasks: 1, workerType: 'calculateMetrics', runtime: 'worker_threads' }),
+      taskRunner: createInlineMetricsTaskRunner(),
     });
 
     expect(result).toBe(0);
@@ -87,7 +80,7 @@ describe('calculateOutputMetrics', () => {
     const encoding = 'o200k_base';
 
     const result = await calculateOutputMetrics(content, encoding, undefined, {
-      taskRunner: mockInitTaskRunner({ numOfTasks: 1, workerType: 'calculateMetrics', runtime: 'worker_threads' }),
+      taskRunner: createInlineMetricsTaskRunner(),
     });
 
     expect(result).toBeGreaterThan(0);

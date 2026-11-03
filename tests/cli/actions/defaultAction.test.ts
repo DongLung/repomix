@@ -1,50 +1,44 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
-import { afterEach, beforeEach, describe, expect, it, type MockedFunction, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCliConfig, buildMergedConfig, runDefaultAction } from '../../../src/cli/actions/defaultAction.js';
-import * as migrationAction from '../../../src/cli/actions/migrationAction.js';
 import type { CliOptions } from '../../../src/cli/types.js';
-import * as configLoader from '../../../src/config/configLoad.js';
-import * as fileStdin from '../../../src/core/file/fileStdin.js';
-import * as packageJsonParser from '../../../src/core/file/packageJsonParse.js';
-import * as packager from '../../../src/core/packager.js';
-import * as loggerModule from '../../../src/shared/logger.js';
+import type { readFilePathsFromStdin } from '../../../src/core/file/fileStdin.js';
+import type { pack } from '../../../src/core/packager.js';
+import { logger } from '../../../src/shared/logger.js';
+import { createMockSpinner } from '../../testing/cliDoubles.js';
+import { silenceLogger } from '../../testing/loggerDoubles.js';
 import { createMockConfig } from '../../testing/testUtils.js';
 
-vi.mock('../../../src/core/packager');
-vi.mock('../../../src/config/configLoad');
-vi.mock('../../../src/core/file/packageJsonParse');
-vi.mock('../../../src/core/file/fileStdin');
-vi.mock('../../../src/shared/logger');
-vi.mock('../../../src/cli/actions/migrationAction');
-
-const mockSpinner = {
-  start: vi.fn() as MockedFunction<() => void>,
-  update: vi.fn() as MockedFunction<(message: string) => void>,
-  succeed: vi.fn() as MockedFunction<(message: string) => void>,
-  fail: vi.fn() as MockedFunction<(message: string) => void>,
+const createDeps = () => {
+  const { spinner, Spinner } = createMockSpinner();
+  const deps = {
+    buildMergedConfig: vi.fn<typeof buildMergedConfig>(),
+    readFilePathsFromStdin: vi.fn<typeof readFilePathsFromStdin>(),
+    pack: vi.fn<typeof pack>(),
+    reportResults: vi.fn(),
+    Spinner,
+  };
+  const configDeps = {
+    runMigrationAction: vi.fn(),
+    loadFileConfig: vi.fn().mockResolvedValue({}),
+    mergeConfigs: vi.fn().mockReturnValue(createMockConfig()),
+  };
+  return { deps, configDeps, mockSpinner: spinner };
 };
 
-vi.mock('../../../src/cli/cliSpinner', () => {
-  const MockSpinner = class {
-    start = mockSpinner.start;
-    update = mockSpinner.update;
-    succeed = mockSpinner.succeed;
-    fail = mockSpinner.fail;
-  };
-  return { Spinner: MockSpinner };
-});
-vi.mock('../../../src/cli/cliReport');
-
 describe('defaultAction', () => {
+  let deps: ReturnType<typeof createDeps>['deps'];
+  let configDeps: ReturnType<typeof createDeps>['configDeps'];
+  let mockSpinner: ReturnType<typeof createDeps>['mockSpinner'];
+
   beforeEach(() => {
-    vi.resetAllMocks();
+    ({ deps, configDeps, mockSpinner } = createDeps());
+    silenceLogger();
 
-    // Reset mockSpinner functions
-    vi.clearAllMocks();
-
-    vi.mocked(packageJsonParser.getVersion).mockResolvedValue('1.0.0');
-    vi.mocked(configLoader.loadFileConfig).mockResolvedValue({});
-    vi.mocked(configLoader.mergeConfigs).mockReturnValue(
+    deps.buildMergedConfig.mockResolvedValue(
       createMockConfig({
         cwd: process.cwd(),
         input: {
@@ -84,11 +78,11 @@ describe('defaultAction', () => {
         },
       }),
     );
-    vi.mocked(fileStdin.readFilePathsFromStdin).mockResolvedValue({
+    deps.readFilePathsFromStdin.mockResolvedValue({
       filePaths: ['test1.txt', 'test2.txt'],
       emptyDirPaths: [],
     });
-    vi.mocked(packager.pack).mockResolvedValue({
+    deps.pack.mockResolvedValue({
       totalFiles: 10,
       totalCharacters: 1000,
       totalTokens: 200,
@@ -106,7 +100,7 @@ describe('defaultAction', () => {
   });
 
   afterEach(() => {
-    vi.resetAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('should run the default command successfully', async () => {
@@ -115,35 +109,35 @@ describe('defaultAction', () => {
       verbose: true,
     };
 
-    await runDefaultAction(['.'], process.cwd(), options);
+    await runDefaultAction(['.'], process.cwd(), options, undefined, deps);
 
-    expect(packager.pack).toHaveBeenCalled();
+    expect(deps.pack).toHaveBeenCalled();
     expect(mockSpinner.start).toHaveBeenCalled();
     expect(mockSpinner.succeed).toHaveBeenCalled();
   });
 
   it('should not migrate legacy files when local config is skipped', async () => {
-    await buildMergedConfig('/tmp/remote-repository', { skipLocalConfig: true });
+    await buildMergedConfig('/tmp/remote-repository', { skipLocalConfig: true }, configDeps);
 
-    expect(migrationAction.runMigrationAction).not.toHaveBeenCalled();
-    expect(configLoader.loadFileConfig).toHaveBeenCalledWith('/tmp/remote-repository', null, {
+    expect(configDeps.runMigrationAction).not.toHaveBeenCalled();
+    expect(configDeps.loadFileConfig).toHaveBeenCalledWith('/tmp/remote-repository', null, {
       skipLocalConfig: true,
     });
   });
 
   it('should migrate legacy files when local config is used', async () => {
-    await buildMergedConfig('/tmp/local-repository', {});
+    await buildMergedConfig('/tmp/local-repository', {}, configDeps);
 
-    expect(migrationAction.runMigrationAction).toHaveBeenCalledWith('/tmp/local-repository');
+    expect(configDeps.runMigrationAction).toHaveBeenCalledWith('/tmp/local-repository');
   });
 
   it('should not migrate a remote clone even when its config is trusted', async () => {
     // A trusted remote sets skipLocalConfig: false, so skipMigration is what keeps
     // migration from rewriting the clone's legacy repopack.config.json into a
     // repomix.config.* the trust prompt never displayed.
-    await buildMergedConfig('/tmp/remote-repository', { skipLocalConfig: false, skipMigration: true });
+    await buildMergedConfig('/tmp/remote-repository', { skipLocalConfig: false, skipMigration: true }, configDeps);
 
-    expect(migrationAction.runMigrationAction).not.toHaveBeenCalled();
+    expect(configDeps.runMigrationAction).not.toHaveBeenCalled();
   });
 
   it('should handle custom include patterns', async () => {
@@ -151,9 +145,9 @@ describe('defaultAction', () => {
       include: '*.js,*.ts',
     };
 
-    await runDefaultAction(['.'], process.cwd(), options);
+    await runDefaultAction(['.'], process.cwd(), options, undefined, deps);
 
-    expect(packager.pack).toHaveBeenCalled();
+    expect(deps.pack).toHaveBeenCalled();
   });
 
   it('should handle stdin mode', async () => {
@@ -161,10 +155,10 @@ describe('defaultAction', () => {
       stdin: true,
     };
 
-    await runDefaultAction(['.'], process.cwd(), options);
+    await runDefaultAction(['.'], process.cwd(), options, undefined, deps);
 
-    expect(fileStdin.readFilePathsFromStdin).toHaveBeenCalledWith(process.cwd());
-    expect(packager.pack).toHaveBeenCalledWith(
+    expect(deps.readFilePathsFromStdin).toHaveBeenCalledWith(process.cwd());
+    expect(deps.pack).toHaveBeenCalledWith(
       [process.cwd()],
       expect.any(Object),
       expect.any(Function),
@@ -174,12 +168,19 @@ describe('defaultAction', () => {
     );
   });
 
+  it.each([[['src']], [['.', 'lib']]])('should reject directory arguments %j in stdin mode', async (directories) => {
+    await expect(runDefaultAction(directories, process.cwd(), { stdin: true }, undefined, deps)).rejects.toThrow(
+      'When using --stdin, do not specify directory arguments.',
+    );
+    expect(deps.readFilePathsFromStdin).not.toHaveBeenCalled();
+  });
+
   it('should forward the abort signal to pack', async () => {
     const { signal } = new AbortController();
 
-    await runDefaultAction(['.'], process.cwd(), { signal });
+    await runDefaultAction(['.'], process.cwd(), { signal }, undefined, deps);
 
-    expect(packager.pack).toHaveBeenCalledWith(
+    expect(deps.pack).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Object),
       expect.any(Function),
@@ -190,18 +191,18 @@ describe('defaultAction', () => {
   });
 
   it('should handle errors gracefully', async () => {
-    vi.mocked(packager.pack).mockRejectedValue(new Error('Test error'));
+    deps.pack.mockRejectedValue(new Error('Test error'));
 
     const options: CliOptions = {};
 
-    await expect(runDefaultAction(['.'], process.cwd(), options)).rejects.toThrow('Test error');
+    await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow('Test error');
     expect(mockSpinner.fail).toHaveBeenCalledWith('Error during packing');
   });
 
   describe('progressCallback', () => {
     it('should forward progress messages to the provided callback', async () => {
       // Configure pack mock to invoke its 3rd argument (progressCallback)
-      vi.mocked(packager.pack).mockImplementation(async (_paths, _config, progressCallback = () => {}) => {
+      deps.pack.mockImplementation(async (_paths, _config, progressCallback = () => {}) => {
         progressCallback('Searching for files...');
         progressCallback('Processing files...');
         return {
@@ -222,14 +223,14 @@ describe('defaultAction', () => {
       });
 
       const callback = vi.fn();
-      await runDefaultAction(['.'], process.cwd(), {}, callback);
+      await runDefaultAction(['.'], process.cwd(), {}, callback, deps);
 
       expect(callback).toHaveBeenCalledWith('Searching for files...');
       expect(callback).toHaveBeenCalledWith('Processing files...');
     });
 
     it('should isolate async callback errors without affecting pack flow', async () => {
-      vi.mocked(packager.pack).mockImplementation(async (_paths, _config, progressCallback = () => {}) => {
+      deps.pack.mockImplementation(async (_paths, _config, progressCallback = () => {}) => {
         progressCallback('test message');
         // Allow microtask to process the rejected promise
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -251,14 +252,14 @@ describe('defaultAction', () => {
       });
 
       const rejectingCallback = vi.fn().mockRejectedValue(new Error('callback error'));
-      const result = await runDefaultAction(['.'], process.cwd(), {}, rejectingCallback);
+      const result = await runDefaultAction(['.'], process.cwd(), {}, rejectingCallback, deps);
 
       expect(result.packResult.totalFiles).toBe(10);
-      expect(loggerModule.logger.trace).toHaveBeenCalledWith('progressCallback error:', expect.any(Error));
+      expect(logger.trace).toHaveBeenCalledWith('progressCallback error:', expect.any(Error));
     });
 
     it('should still update spinner even when callback throws synchronously', async () => {
-      vi.mocked(packager.pack).mockImplementation(async (_paths, _config, progressCallback = () => {}) => {
+      deps.pack.mockImplementation(async (_paths, _config, progressCallback = () => {}) => {
         progressCallback('test message');
         return {
           totalFiles: 10,
@@ -280,7 +281,7 @@ describe('defaultAction', () => {
       const throwingCallback = vi.fn().mockImplementation(() => {
         throw new Error('sync error');
       });
-      await runDefaultAction(['.'], process.cwd(), {}, throwingCallback);
+      await runDefaultAction(['.'], process.cwd(), {}, throwingCallback, deps);
 
       // Spinner should still be updated despite callback failure
       expect(mockSpinner.update).toHaveBeenCalledWith('test message');
@@ -410,7 +411,7 @@ describe('defaultAction', () => {
 
   describe('skill-generate validation', () => {
     it('should throw error when --skill-generate is used with --stdout', async () => {
-      vi.mocked(configLoader.mergeConfigs).mockReturnValue(
+      deps.buildMergedConfig.mockResolvedValue(
         createMockConfig({
           cwd: process.cwd(),
           skillGenerate: 'my-skill',
@@ -437,13 +438,13 @@ describe('defaultAction', () => {
         stdout: true,
       };
 
-      await expect(runDefaultAction(['.'], process.cwd(), options)).rejects.toThrow(
+      await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow(
         '--skill-generate cannot be used with --stdout',
       );
     });
 
     it('should throw error when --skill-generate is used with --copy', async () => {
-      vi.mocked(configLoader.mergeConfigs).mockReturnValue(
+      deps.buildMergedConfig.mockResolvedValue(
         createMockConfig({
           cwd: process.cwd(),
           skillGenerate: 'my-skill',
@@ -470,7 +471,7 @@ describe('defaultAction', () => {
         copy: true,
       };
 
-      await expect(runDefaultAction(['.'], process.cwd(), options)).rejects.toThrow(
+      await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow(
         '--skill-generate cannot be used with --copy',
       );
     });
@@ -480,7 +481,7 @@ describe('defaultAction', () => {
         skillProjectName: 'Repomix',
       };
 
-      await expect(runDefaultAction(['.'], process.cwd(), options)).rejects.toThrow(
+      await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow(
         '--skill-project-name can only be used with --skill-generate',
       );
     });
@@ -490,13 +491,106 @@ describe('defaultAction', () => {
         skillProjectName: '',
       };
 
-      await expect(runDefaultAction(['.'], process.cwd(), options)).rejects.toThrow(
+      await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow(
         '--skill-project-name can only be used with --skill-generate',
       );
     });
 
+    it.each<[string, CliOptions]>([
+      ['--skill-output', { skillOutput: 'out-skill' }],
+      ['--force', { force: true }],
+    ])('should throw error when %s is used without --skill-generate', async (flag, options) => {
+      await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow(
+        `${flag} can only be used with --skill-generate`,
+      );
+      expect(deps.pack).not.toHaveBeenCalled();
+    });
+
+    it('should throw error when --skill-output is whitespace only', async () => {
+      deps.buildMergedConfig.mockResolvedValue(createMockConfig({ cwd: process.cwd(), skillGenerate: true }));
+
+      await expect(
+        runDefaultAction(['.'], process.cwd(), { skillGenerate: true, skillOutput: '   ' }, undefined, deps),
+      ).rejects.toThrow('--skill-output path cannot be empty');
+    });
+
+    describe('skill name and directory resolution', () => {
+      let tempDir: string;
+
+      beforeEach(async () => {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repomix-default-action-skill-'));
+      });
+
+      afterEach(async () => {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      });
+
+      const getPackOptions = () => deps.pack.mock.calls[0][5];
+
+      it('should use the --skill-generate name and resolve a relative --skill-output against cwd', async () => {
+        deps.buildMergedConfig.mockResolvedValue(createMockConfig({ cwd: tempDir, skillGenerate: 'my-skill' }));
+
+        await runDefaultAction(
+          ['.'],
+          tempDir,
+          { skillGenerate: 'my-skill', skillOutput: 'skills/out' },
+          undefined,
+          deps,
+        );
+
+        expect(getPackOptions()).toMatchObject({
+          skillName: 'my-skill',
+          skillDir: path.join(tempDir, 'skills', 'out'),
+        });
+      });
+
+      it('should derive the skill name from the target directory when --skill-generate has no name', async () => {
+        const projectDir = path.join(tempDir, 'My_Project');
+        await fs.mkdir(projectDir);
+        deps.buildMergedConfig.mockResolvedValue(createMockConfig({ cwd: tempDir, skillGenerate: true }));
+
+        await runDefaultAction(
+          ['My_Project'],
+          tempDir,
+          { skillGenerate: true, skillOutput: path.join(tempDir, 'out') },
+          undefined,
+          deps,
+        );
+
+        expect(getPackOptions()).toMatchObject({
+          skillName: 'repomix-reference-my-project',
+          skillDir: path.join(tempDir, 'out'),
+        });
+      });
+
+      it('should refuse an existing --skill-output directory without --force', async () => {
+        await fs.mkdir(path.join(tempDir, 'existing'));
+        deps.buildMergedConfig.mockResolvedValue(createMockConfig({ cwd: tempDir, skillGenerate: 'my-skill' }));
+
+        await expect(
+          runDefaultAction(['.'], tempDir, { skillGenerate: 'my-skill', skillOutput: 'existing' }, undefined, deps),
+        ).rejects.toThrow('Use --force to overwrite.');
+        expect(deps.pack).not.toHaveBeenCalled();
+      });
+
+      it('should keep a pre-resolved skill name and directory (as passed by remoteAction)', async () => {
+        deps.buildMergedConfig.mockResolvedValue(createMockConfig({ cwd: tempDir, skillGenerate: true }));
+        const skillDir = path.join(tempDir, 'pre-resolved');
+
+        await runDefaultAction(
+          ['.'],
+          tempDir,
+          { skillGenerate: true, skillName: 'from-remote', skillDir, skillOutput: 'ignored' },
+          undefined,
+          deps,
+        );
+
+        expect(getPackOptions()).toMatchObject({ skillName: 'from-remote', skillDir });
+      });
+    });
+
     it('should throw error when --skill-project-name is empty', async () => {
-      vi.mocked(configLoader.mergeConfigs).mockReturnValue(
+      deps.buildMergedConfig.mockResolvedValue(
         createMockConfig({
           cwd: process.cwd(),
           skillGenerate: true,
@@ -508,7 +602,7 @@ describe('defaultAction', () => {
         skillProjectName: '   ',
       };
 
-      await expect(runDefaultAction(['.'], process.cwd(), options)).rejects.toThrow(
+      await expect(runDefaultAction(['.'], process.cwd(), options, undefined, deps)).rejects.toThrow(
         '--skill-project-name cannot be empty',
       );
     });

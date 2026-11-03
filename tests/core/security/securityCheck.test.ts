@@ -1,31 +1,16 @@
 // src/core/security/securityCheck.test.ts
 
+import { fileURLToPath } from 'node:url';
 import pc from 'picocolors';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RawFile } from '../../../src/core/file/fileTypes.js';
 import type { GitDiffResult } from '../../../src/core/git/gitDiffHandle.js';
 import { runSecurityCheck } from '../../../src/core/security/securityCheck.js';
-import type { SecurityCheckTask } from '../../../src/core/security/workers/securityCheckWorker.js';
 import securityCheckWorker from '../../../src/core/security/workers/securityCheckWorker.js';
 import { logger, repomixLogLevels } from '../../../src/shared/logger.js';
 import type { WorkerOptions } from '../../../src/shared/processConcurrency.js';
-
-vi.mock('../../../src/shared/logger');
-vi.mock('../../../src/shared/processConcurrency', () => ({
-  getProcessConcurrency: vi.fn(() => 4),
-  initWorker: vi.fn(() => ({
-    run: vi.fn().mockImplementation(async (task: SecurityCheckTask) => {
-      return await securityCheckWorker(task);
-    }),
-  })),
-  cleanupWorkerPool: vi.fn(),
-  initTaskRunner: vi.fn(() => ({
-    run: vi.fn().mockImplementation(async (task: SecurityCheckTask) => {
-      return await securityCheckWorker(task);
-    }),
-    cleanup: vi.fn(),
-  })),
-}));
+import { silenceLogger } from '../../testing/loggerDoubles.js';
+import { inlineInitTaskRunner } from '../../testing/taskRunnerDoubles.js';
 
 const mockFiles: RawFile[] = [
   {
@@ -42,18 +27,17 @@ const mockFiles: RawFile[] = [
 
 const mockGetProcessConcurrency = () => 4;
 
-const mockInitTaskRunner = <T, R>(_options: WorkerOptions) => {
-  return {
-    run: async (task: T) => {
-      return (await securityCheckWorker(task as SecurityCheckTask)) as R;
-    },
-    cleanup: async () => {
-      // Mock cleanup - no-op for tests
-    },
-  };
-};
+const mockInitTaskRunner = inlineInitTaskRunner(securityCheckWorker);
 
 describe('runSecurityCheck', () => {
+  beforeEach(() => {
+    silenceLogger();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should identify files with security issues', async () => {
     const result = await runSecurityCheck(mockFiles, () => {}, undefined, undefined, {
       initTaskRunner: mockInitTaskRunner,
@@ -149,15 +133,24 @@ describe('runSecurityCheck', () => {
   });
 
   it('should use default initTaskRunner when no deps provided', async () => {
-    // Test the default initTaskRunner function (lines 16-18)
-    // Mock logger.getLogLevel to return a valid value
-    vi.mocked(logger.getLogLevel).mockReturnValue(repomixLogLevels.INFO);
+    // The default deps start a real Tinypool pool. The TypeScript worker cannot be spawned from the
+    // source tree, so point the pool at a plain-JS stub through the bundled-worker override.
+    vi.stubEnv(
+      'REPOMIX_WORKER_PATH',
+      fileURLToPath(new URL('../../fixtures/workers/securityCheckStubWorker.mjs', import.meta.url)),
+    );
+    // Pin logger.getLogLevel to a valid value
+    vi.spyOn(logger, 'getLogLevel').mockReturnValue(repomixLogLevels.INFO);
 
-    const result = await runSecurityCheck(mockFiles, () => {});
+    try {
+      const result = await runSecurityCheck(mockFiles, () => {});
 
-    expect(result).toHaveLength(1);
-    expect(result[0].filePath).toBe('test1.js');
-    expect(result[0].messages).toHaveLength(1);
+      expect(result).toHaveLength(1);
+      expect(result[0].filePath).toBe('test1.js');
+      expect(result[0].messages).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('should process Git diff content when gitDiffResult is provided', async () => {

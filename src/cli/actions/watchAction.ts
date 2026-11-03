@@ -6,6 +6,7 @@ import type { RepomixConfigMerged } from '../../config/configSchema.js';
 import { type PackResult, pack } from '../../core/packager.js';
 import { RepomixError } from '../../shared/errorHandle.js';
 import { logger } from '../../shared/logger.js';
+import { nodeTimers, type Timers } from '../../shared/timers.js';
 import type { RepomixProgressCallback } from '../../shared/types.js';
 import { redactOptionsForLog } from '../../shared/urlRedact.js';
 import { reportResults } from '../cliReport.js';
@@ -25,6 +26,16 @@ export interface WatchDeps {
   watch: (paths: string | string[], options?: ChokidarOptions) => FSWatcher;
   signal?: AbortSignal;
   buildIgnoreFilter?: (targetPaths: string[], config: RepomixConfigMerged) => Promise<(watchedPath: string) => boolean>;
+  buildMergedConfig?: typeof buildMergedConfig;
+  pack?: typeof pack;
+  reportResults?: typeof reportResults;
+  Spinner?: typeof Spinner;
+  timers?: Timers;
+}
+
+interface PackDeps {
+  pack: typeof pack;
+  Spinner: typeof Spinner;
 }
 
 const resolveDefaultDeps = async (): Promise<WatchDeps> => {
@@ -37,8 +48,9 @@ const runPack = async (
   targetPaths: string[],
   config: RepomixConfigMerged,
   cliOptions: CliOptions,
+  deps: PackDeps,
 ): Promise<PackResult> => {
-  const spinner = new Spinner('Packing...', cliOptions);
+  const spinner = new deps.Spinner('Packing...', cliOptions);
   spinner.start();
 
   try {
@@ -46,7 +58,7 @@ const runPack = async (
       spinner.update(message);
     };
 
-    const packResult = await pack(targetPaths, config, handleProgress);
+    const packResult = await deps.pack(targetPaths, config, handleProgress);
     spinner.succeed('Packing completed successfully!');
     return packResult;
   } catch (error) {
@@ -70,9 +82,13 @@ export const runWatchAction = async (
   // Only load chokidar if no watch function is provided (enables faster tests)
   const resolvedDeps: WatchDeps = deps?.watch ? (deps as WatchDeps) : { ...(await resolveDefaultDeps()), ...deps };
 
+  const packDeps: PackDeps = { pack: resolvedDeps.pack ?? pack, Spinner: resolvedDeps.Spinner ?? Spinner };
+  const report = resolvedDeps.reportResults ?? reportResults;
+  const timers = resolvedDeps.timers ?? nodeTimers;
+
   logger.trace('Watch mode: loaded CLI options:', redactOptionsForLog(cliOptions));
 
-  const config = await buildMergedConfig(cwd, cliOptions);
+  const config = await (resolvedDeps.buildMergedConfig ?? buildMergedConfig)(cwd, cliOptions);
 
   // Watch-specific incompatibilities. Each of these is independently incompatible with
   // --watch and can also be set via the config file (which validateWatchOptions in cliRun,
@@ -103,8 +119,8 @@ export const runWatchAction = async (
   const targetPaths = directories.map((directory) => path.resolve(cwd, directory));
 
   // Run initial pack
-  const packResult = await runPack(targetPaths, config, cliOptions);
-  reportResults(cwd, packResult, config, cliOptions);
+  const packResult = await runPack(targetPaths, config, cliOptions, packDeps);
+  report(cwd, packResult, config, cliOptions);
   logger.log(pc.dim(`\nWatching ${packResult.safeFilePaths.length} files for changes... (Ctrl+C to stop)\n`));
 
   // Watch target directories instead of individual files so new files are detected.
@@ -130,7 +146,7 @@ export const runWatchAction = async (
   // Rebuild guard — prevents concurrent packs and queues a follow-up if changes arrive mid-pack
   let isRebuilding = false;
   let pendingRebuild = false;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let debounceTimer: NodeJS.Timeout | null = null;
   let shuttingDown = false;
   let activeRebuildPromise: Promise<void> | null = null;
 
@@ -140,9 +156,9 @@ export const runWatchAction = async (
     }
 
     if (debounceTimer !== null) {
-      clearTimeout(debounceTimer);
+      timers.clearTimeout(debounceTimer);
     }
-    debounceTimer = setTimeout(async () => {
+    debounceTimer = timers.setTimeout(async () => {
       debounceTimer = null;
 
       // Re-check shutdown in case it was initiated while the timer was pending
@@ -158,8 +174,8 @@ export const runWatchAction = async (
       isRebuilding = true;
       const rebuildWork = async () => {
         try {
-          const result = await runPack(targetPaths, config, cliOptions);
-          reportResults(cwd, result, config, cliOptions);
+          const result = await runPack(targetPaths, config, cliOptions, packDeps);
+          report(cwd, result, config, cliOptions);
           // toTimeString() returns "HH:MM:SS GMT..." independent of locale, so the leading
           // time portion is a portable, consistent 24-hour timestamp on every platform
           // (toLocaleTimeString(undefined) would follow the system locale, e.g. non-ASCII
@@ -207,7 +223,7 @@ export const runWatchAction = async (
     shuttingDown = true;
 
     if (debounceTimer !== null) {
-      clearTimeout(debounceTimer);
+      timers.clearTimeout(debounceTimer);
     }
     pendingRebuild = false;
     process.removeListener('SIGINT', cleanup);
